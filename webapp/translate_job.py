@@ -8,8 +8,18 @@ import zipfile
 from pathlib import Path
 
 
-TARGET_LANGUAGE = "Russian"
-TARGET_CODE = "ru"
+SUPPORTED_LANGUAGES = {
+    "ru": "Русский",
+    "en": "English",
+    "zh": "中文",
+    "ja": "日本語",
+    "ko": "한국어",
+    "fr": "Français",
+    "de": "Deutsch",
+    "es": "Español",
+}
+DEFAULT_TARGET_CODE = "ru"
+DEFAULT_TARGET_LANGUAGE = SUPPORTED_LANGUAGES[DEFAULT_TARGET_CODE]
 MAX_TRANSLATORS = 8
 
 
@@ -21,8 +31,15 @@ def run_logged(command: list[str], cwd: Path, log_path: Path, timeout: int | Non
         raise RuntimeError(f"command failed ({result.returncode}); see {log_path}")
 
 
-def translate_chunk(repo_root: Path, temp_dir: Path, source: Path, output: Path, log_path: Path) -> None:
-    prompt = f"""Translate exactly one Markdown book chunk from English to {TARGET_LANGUAGE}.
+def translate_chunk(
+    repo_root: Path,
+    temp_dir: Path,
+    source: Path,
+    output: Path,
+    log_path: Path,
+    target_language: str,
+) -> None:
+    prompt = f"""Translate exactly one Markdown book chunk from English to {target_language}.
 Read source file: {source}
 Write the complete translation to: {output}
 Rules: preserve Markdown structure, links, images, code and paragraph order; translate only readable English text; do not summarize, omit, add commentary, or touch any other files. The output file must be UTF-8 and non-empty."""
@@ -62,12 +79,18 @@ def _build_zip(temp_dir: Path, result_path: Path) -> None:
             archive.write(path, path.name)
 
 
-def run_translation(repo_root: Path, job_dir: Path, source_path: Path) -> Path:
+def run_translation(
+    repo_root: Path,
+    job_dir: Path,
+    source_path: Path,
+    target_code: str = DEFAULT_TARGET_CODE,
+    target_language: str = DEFAULT_TARGET_LANGUAGE,
+) -> Path:
     scripts_dir = repo_root / "scripts"
     work_root = job_dir / "work"
     work_root.mkdir(parents=True, exist_ok=True)
     log_path = job_dir / "pipeline.log"
-    convert = [sys.executable, str(scripts_dir / "convert.py"), str(source_path), "--olang", TARGET_CODE, "--temp-root", str(work_root)]
+    convert = [sys.executable, str(scripts_dir / "convert.py"), str(source_path), "--olang", target_code, "--temp-root", str(work_root)]
     run_logged(convert, repo_root, log_path, timeout=1800)
     temp_dir = work_root / f"{source_path.stem}_temp"
     if not temp_dir.is_dir():
@@ -84,7 +107,7 @@ def run_translation(repo_root: Path, job_dir: Path, source_path: Path) -> Path:
         last_error: Exception | None = None
         for _attempt in range(2):
             try:
-                translate_chunk(repo_root, temp_dir, source, output, chunk_log)
+                translate_chunk(repo_root, temp_dir, source, output, chunk_log, target_language)
                 return
             except Exception as exc:
                 last_error = exc
@@ -95,7 +118,7 @@ def run_translation(repo_root: Path, job_dir: Path, source_path: Path) -> Path:
     if errors:
         raise RuntimeError(f"{len(errors)} chunk(s) failed; see pipeline.log and chunk logs")
 
-    build = [sys.executable, str(scripts_dir / "merge_and_build.py"), "--temp-dir", str(temp_dir), "--lang", TARGET_CODE]
+    build = [sys.executable, str(scripts_dir / "merge_and_build.py"), "--temp-dir", str(temp_dir), "--lang", target_code]
     run_logged(build, repo_root, log_path, timeout=1800)
     result_path = job_dir / "translated-book.zip"
     _build_zip(temp_dir, result_path)

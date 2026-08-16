@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import http.client
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -49,7 +50,8 @@ class WebAppTests(unittest.TestCase):
         response, payload = self.request("GET", "/")
         self.assertEqual(response.status, 200)
         self.assertIn("Файлов пока нет".encode(), payload)
-        self.assertIn("с английского на русский".encode(), payload)
+        self.assertIn("name=\"target_language\"".encode(), payload)
+        self.assertIn("<option value=\"ru\" selected>Русский</option>".encode(), payload)
 
     def test_upload_creates_queued_job(self) -> None:
         boundary = "----translate-book-" + uuid.uuid4().hex
@@ -63,7 +65,25 @@ class WebAppTests(unittest.TestCase):
         jobs = self.app.store.list()
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["status"], "queued")
+        self.assertEqual(jobs[0]["target_code"], "ru")
+        self.assertEqual(jobs[0]["target_language"], "Русский")
         self.assertTrue(Path(jobs[0]["source_path"]).is_file())
+
+    def test_upload_persists_selected_language(self) -> None:
+        boundary = "----translate-book-" + uuid.uuid4().hex
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="target_language"\r\n\r\n'
+            "de\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="book"; filename="sample.epub"\r\n'
+            "Content-Type: application/epub+zip\r\n\r\n"
+        ).encode() + b"epub bytes" + f"\r\n--{boundary}--\r\n".encode()
+        response, _ = self.request("POST", "/upload", body, f"multipart/form-data; boundary={boundary}")
+        self.assertEqual(response.status, 303)
+        job = self.app.store.list()[0]
+        self.assertEqual(job["target_code"], "de")
+        self.assertEqual(job["target_language"], "Deutsch")
 
     def test_done_job_can_be_downloaded(self) -> None:
         job_id = uuid.uuid4().hex
@@ -92,6 +112,35 @@ class WebAppTests(unittest.TestCase):
             db.execute("UPDATE jobs SET status='processing' WHERE id=?", (job_id,))
         restarted = type(self.app.store)(self.app.store.data_dir)
         self.assertEqual(restarted.get(job_id)["status"], "queued")
+
+    def test_legacy_store_gets_default_russian_language(self) -> None:
+        data_dir = Path(self.temp_dir.name) / "legacy-data"
+        data_dir.mkdir()
+        jobs_dir = data_dir / "jobs"
+        jobs_dir.mkdir()
+        db_path = data_dir / "jobs.sqlite3"
+        with sqlite3.connect(db_path) as db:
+            db.execute(
+                """
+                CREATE TABLE jobs (
+                    id TEXT PRIMARY KEY,
+                    original_name TEXT NOT NULL,
+                    source_path TEXT NOT NULL,
+                    result_path TEXT,
+                    size_bytes INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        from webapp.app import Store
+
+        store = Store(data_dir)
+        columns = {row["name"] for row in store.connect().execute("PRAGMA table_info(jobs)")}
+        self.assertIn("target_code", columns)
+        self.assertIn("target_language", columns)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .translate_job import run_translation
+from .translate_job import DEFAULT_TARGET_CODE, DEFAULT_TARGET_LANGUAGE, SUPPORTED_LANGUAGES, run_translation
 
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -51,10 +51,17 @@ class Store:
                     status TEXT NOT NULL,
                     error TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    target_code TEXT NOT NULL DEFAULT 'ru',
+                    target_language TEXT NOT NULL DEFAULT 'Русский'
                 )
                 """
             )
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            if "target_code" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN target_code TEXT NOT NULL DEFAULT 'ru'")
+            if "target_language" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN target_language TEXT NOT NULL DEFAULT 'Русский'")
             db.execute(
                 "UPDATE jobs SET status='queued', updated_at=? WHERE status='processing'",
                 (utc_now(),),
@@ -65,15 +72,26 @@ class Store:
         db.row_factory = sqlite3.Row
         return db
 
-    def add(self, job_id: str, original_name: str, source_path: Path, size_bytes: int) -> None:
+    def add(
+        self,
+        job_id: str,
+        original_name: str,
+        source_path: Path,
+        size_bytes: int,
+        target_code: str = DEFAULT_TARGET_CODE,
+        target_language: str = DEFAULT_TARGET_LANGUAGE,
+    ) -> None:
         now = utc_now()
         with self.connect() as db:
             db.execute(
                 """
-                INSERT INTO jobs(id, original_name, source_path, size_bytes, status, created_at, updated_at)
-                VALUES(?, ?, ?, ?, 'queued', ?, ?)
+                INSERT INTO jobs(
+                    id, original_name, source_path, size_bytes, status,
+                    created_at, updated_at, target_code, target_language
+                )
+                VALUES(?, ?, ?, ?, 'queued', ?, ?, ?, ?)
                 """,
-                (job_id, original_name, str(source_path), size_bytes, now, now),
+                (job_id, original_name, str(source_path), size_bytes, now, now, target_code, target_language),
             )
 
     def list(self) -> list[sqlite3.Row]:
@@ -136,6 +154,8 @@ class Worker(threading.Thread):
                     repo_root=self.repo_root,
                     job_dir=self.store.jobs_dir / job["id"],
                     source_path=Path(job["source_path"]),
+                    target_code=job["target_code"],
+                    target_language=job["target_language"],
                 )
                 self.store.finish(job["id"], result_path)
             except Exception as exc:  # keep the durable queue alive
@@ -162,12 +182,16 @@ def page(app: App, message: str = "") -> bytes:
         rows.append(
             f"""<li class="job">
               <div><strong>{html.escape(job["original_name"])}</strong><span class="status {status}">{STATUS_LABELS.get(status, status)}</span></div>
-              <small>{job["created_at"].replace("T", " ").replace("+00:00", " UTC")} · {job["size_bytes"] / 1024 / 1024:.1f} MB</small>
+              <small>{job["created_at"].replace("T", " ").replace("+00:00", " UTC")} · {job["size_bytes"] / 1024 / 1024:.1f} MB · {html.escape(job["target_language"])}</small>
               {result}{error}
             </li>"""
         )
     jobs = "".join(rows) or '<li class="empty">Файлов пока нет.</li>'
     notice = f'<div class="notice">{html.escape(message)}</div>' if message else ""
+    language_options = "".join(
+        f'<option value="{code}"{" selected" if code == DEFAULT_TARGET_CODE else ""}>{html.escape(name)}</option>'
+        for code, name in SUPPORTED_LANGUAGES.items()
+    )
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Translate Book</title>
@@ -177,15 +201,15 @@ def page(app: App, message: str = "") -> bytes:
   h1 {{ margin:0 0 8px; font-size:32px; }} p {{ color:#9ca3af; }}
   .card {{ background:#1f2937; border:1px solid #374151; border-radius:14px; padding:20px; margin:22px 0; }}
   form {{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }}
-  input[type=file] {{ max-width:100%; }} button, .download {{ background:#7c3aed; color:white; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; text-decoration:none; font-weight:600; }}
+  input[type=file], select {{ max-width:100%; background:#111827; color:#f3f4f6; border:1px solid #4b5563; border-radius:8px; padding:9px; }} button, .download {{ background:#7c3aed; color:white; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; text-decoration:none; font-weight:600; }}
   button:hover, .download:hover {{ background:#8b5cf6; }}
   ul {{ list-style:none; margin:0; padding:0; }} .job {{ border-top:1px solid #374151; padding:16px 0; }} .job:first-child {{ border-top:0; }}
   .status {{ display:inline-block; margin-left:10px; padding:3px 8px; border-radius:999px; font-size:12px; background:#374151; }}
   .status.done {{ background:#065f46; }} .status.failed {{ background:#991b1b; }} .status.processing {{ background:#92400e; }}
   small {{ display:block; color:#9ca3af; margin:7px 0 12px; }} .error {{ color:#fca5a5; white-space:pre-wrap; font-size:13px; }} .notice {{ background:#064e3b; padding:10px 12px; border-radius:8px; }} .empty {{ color:#9ca3af; }}
 </style></head><body>
-<h1>Translate Book</h1><p>Перевод книги с английского на русский. Обрабатывается одна книга за раз.</p>
-{notice}<section class="card"><form action="/upload" method="post" enctype="multipart/form-data"><input name="book" type="file" accept=".pdf,.docx,.epub" required><button type="submit">Загрузить</button></form><small>PDF, DOCX или EPUB · максимум 20 MB</small></section>
+<h1>Translate Book</h1><p>Перевод книги с английского на выбранный язык. Обрабатывается одна книга за раз.</p>
+{notice}<section class="card"><form action="/upload" method="post" enctype="multipart/form-data"><input name="book" type="file" accept=".pdf,.docx,.epub" required><label for="target_language">Язык результата</label><select id="target_language" name="target_language">{language_options}</select><button type="submit">Загрузить</button></form><small>По умолчанию: русский · PDF, DOCX или EPUB · максимум 20 MB</small></section>
 <section class="card"><h2>Файлы</h2><p><a href="/" style="color:#c4b5fd">Обновить список</a></p><ul>{jobs}</ul></section>
 </body></html>""".encode("utf-8")
 
@@ -267,6 +291,21 @@ class Handler(BaseHTTPRequestHandler):
         message = BytesParser(policy=default).parsebytes(
             f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body
         )
+        language_part = next(
+            (part for part in message.iter_parts() if part.get_param("name", header="content-disposition") == "target_language"),
+            None,
+        )
+        target_code = DEFAULT_TARGET_CODE
+        if language_part is not None:
+            raw_language = language_part.get_payload(decode=True) or b""
+            try:
+                target_code = raw_language.decode(language_part.get_content_charset() or "utf-8").strip().lower()
+            except UnicodeDecodeError:
+                target_code = ""
+        if target_code not in SUPPORTED_LANGUAGES:
+            self.send_bytes(page(self.server.app, "Выбранный язык не поддерживается."), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
+            return
+        target_language = SUPPORTED_LANGUAGES[target_code]
         uploaded = next((part for part in message.iter_parts() if part.get_param("name", header="content-disposition") == "book"), None)
         if uploaded is None or not uploaded.get_filename():
             self.send_bytes(page(self.server.app, "Файл не выбран."), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
@@ -286,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
         source_dir.mkdir(parents=True, exist_ok=False)
         source_path = source_dir / filename
         source_path.write_bytes(payload)
-        self.server.app.store.add(job_id, filename, source_path, len(payload))
+        self.server.app.store.add(job_id, filename, source_path, len(payload), target_code, target_language)
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", "/")
         self.end_headers()
