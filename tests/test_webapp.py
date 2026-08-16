@@ -10,7 +10,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from webapp.app import App, WebServer
+from webapp.app import App, Store, WebServer, page
 
 
 class WebAppTests(unittest.TestCase):
@@ -50,6 +50,8 @@ class WebAppTests(unittest.TestCase):
         response, payload = self.request("GET", "/")
         self.assertEqual(response.status, 200)
         self.assertIn("Файлов пока нет".encode(), payload)
+        self.assertIn("name=\"source_language\"".encode(), payload)
+        self.assertIn("<option value=\"en\" selected>English</option>".encode(), payload)
         self.assertIn("name=\"target_language\"".encode(), payload)
         self.assertIn("<option value=\"ru\" selected>Русский</option>".encode(), payload)
 
@@ -65,6 +67,8 @@ class WebAppTests(unittest.TestCase):
         jobs = self.app.store.list()
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["status"], "queued")
+        self.assertEqual(jobs[0]["source_code"], "en")
+        self.assertEqual(jobs[0]["source_language"], "English")
         self.assertEqual(jobs[0]["target_code"], "ru")
         self.assertEqual(jobs[0]["target_language"], "Русский")
         self.assertTrue(Path(jobs[0]["source_path"]).is_file())
@@ -72,6 +76,9 @@ class WebAppTests(unittest.TestCase):
     def test_upload_persists_selected_language(self) -> None:
         boundary = "----translate-book-" + uuid.uuid4().hex
         body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="source_language"\r\n\r\n'
+            "fr\r\n"
             f"--{boundary}\r\n"
             'Content-Disposition: form-data; name="target_language"\r\n\r\n'
             "de\r\n"
@@ -82,8 +89,25 @@ class WebAppTests(unittest.TestCase):
         response, _ = self.request("POST", "/upload", body, f"multipart/form-data; boundary={boundary}")
         self.assertEqual(response.status, 303)
         job = self.app.store.list()[0]
+        self.assertEqual(job["source_code"], "fr")
+        self.assertEqual(job["source_language"], "Français")
         self.assertEqual(job["target_code"], "de")
         self.assertEqual(job["target_language"], "Deutsch")
+
+    def test_progress_is_shown_for_translated_chunks(self) -> None:
+        job_id = uuid.uuid4().hex
+        job_dir = self.app.store.jobs_dir / job_id
+        temp_dir = job_dir / "work" / "source_temp"
+        temp_dir.mkdir(parents=True)
+        (temp_dir / "chunk0001.md").write_text("one", encoding="utf-8")
+        (temp_dir / "chunk0002.md").write_text("two", encoding="utf-8")
+        (temp_dir / "output_chunk0001.md").write_text("translated", encoding="utf-8")
+        source = job_dir / "source.epub"
+        source.write_bytes(b"source")
+        self.app.store.add(job_id, "source.epub", source, 6)
+        job = self.app.store.get(job_id)
+        self.assertEqual(self.app.store.progress(job), (1, 2))
+        self.assertIn("50.0% (1/2)".encode(), page(self.app))
 
     def test_done_job_can_be_downloaded(self) -> None:
         job_id = uuid.uuid4().hex
@@ -135,12 +159,13 @@ class WebAppTests(unittest.TestCase):
                 )
                 """
             )
-        from webapp.app import Store
-
         store = Store(data_dir)
-        columns = {row["name"] for row in store.connect().execute("PRAGMA table_info(jobs)")}
+        with store.connect() as db:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
         self.assertIn("target_code", columns)
         self.assertIn("target_language", columns)
+        self.assertIn("source_code", columns)
+        self.assertIn("source_language", columns)
 
 
 if __name__ == "__main__":

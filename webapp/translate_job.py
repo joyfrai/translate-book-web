@@ -18,6 +18,9 @@ SUPPORTED_LANGUAGES = {
     "de": "Deutsch",
     "es": "Español",
 }
+SOURCE_LANGUAGES = {"auto": "Автоопределение", **SUPPORTED_LANGUAGES}
+DEFAULT_SOURCE_CODE = "en"
+DEFAULT_SOURCE_LANGUAGE = SUPPORTED_LANGUAGES[DEFAULT_SOURCE_CODE]
 DEFAULT_TARGET_CODE = "ru"
 DEFAULT_TARGET_LANGUAGE = SUPPORTED_LANGUAGES[DEFAULT_TARGET_CODE]
 MAX_TRANSLATORS = 8
@@ -37,9 +40,11 @@ def translate_chunk(
     source: Path,
     output: Path,
     log_path: Path,
+    source_language: str,
     target_language: str,
 ) -> None:
-    prompt = f"""Translate exactly one Markdown book chunk from English to {target_language}.
+    source_label = "the detected source language" if source_language == SOURCE_LANGUAGES["auto"] else source_language
+    prompt = f"""Translate exactly one Markdown book chunk from {source_label} to {target_language}.
 Read source file: {source}
 Write the complete translation to: {output}
 Rules: preserve Markdown structure, links, images, code and paragraph order; translate only readable English text; do not summarize, omit, add commentary, or touch any other files. The output file must be UTF-8 and non-empty."""
@@ -85,12 +90,24 @@ def run_translation(
     source_path: Path,
     target_code: str = DEFAULT_TARGET_CODE,
     target_language: str = DEFAULT_TARGET_LANGUAGE,
+    source_code: str = DEFAULT_SOURCE_CODE,
+    source_language: str = DEFAULT_SOURCE_LANGUAGE,
 ) -> Path:
     scripts_dir = repo_root / "scripts"
     work_root = job_dir / "work"
     work_root.mkdir(parents=True, exist_ok=True)
     log_path = job_dir / "pipeline.log"
-    convert = [sys.executable, str(scripts_dir / "convert.py"), str(source_path), "--olang", target_code, "--temp-root", str(work_root)]
+    convert = [
+        sys.executable,
+        str(scripts_dir / "convert.py"),
+        str(source_path),
+        "--ilang",
+        source_code,
+        "--olang",
+        target_code,
+        "--temp-root",
+        str(work_root),
+    ]
     run_logged(convert, repo_root, log_path, timeout=1800)
     temp_dir = work_root / f"{source_path.stem}_temp"
     if not temp_dir.is_dir():
@@ -107,7 +124,7 @@ def run_translation(
         last_error: Exception | None = None
         for _attempt in range(2):
             try:
-                translate_chunk(repo_root, temp_dir, source, output, chunk_log, target_language)
+                translate_chunk(repo_root, temp_dir, source, output, chunk_log, source_language, target_language)
                 return
             except Exception as exc:
                 last_error = exc
