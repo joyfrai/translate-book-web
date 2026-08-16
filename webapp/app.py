@@ -184,7 +184,7 @@ def page(app: App, message: str = "") -> bytes:
   .status.done {{ background:#065f46; }} .status.failed {{ background:#991b1b; }} .status.processing {{ background:#92400e; }}
   small {{ display:block; color:#9ca3af; margin:7px 0 12px; }} .error {{ color:#fca5a5; white-space:pre-wrap; font-size:13px; }} .notice {{ background:#064e3b; padding:10px 12px; border-radius:8px; }} .empty {{ color:#9ca3af; }}
 </style></head><body>
-<h1>Translate Book</h1><p>Перевод книги с русского на английский. Обрабатывается одна книга за раз.</p>
+<h1>Translate Book</h1><p>Перевод книги с английского на русский. Обрабатывается одна книга за раз.</p>
 {notice}<section class="card"><form action="/upload" method="post" enctype="multipart/form-data"><input name="book" type="file" accept=".pdf,.docx,.epub" required><button type="submit">Загрузить</button></form><small>PDF, DOCX или EPUB · максимум 20 MB</small></section>
 <section class="card"><h2>Файлы</h2><p><a href="/" style="color:#c4b5fd">Обновить список</a></p><ul>{jobs}</ul></section>
 </body></html>""".encode("utf-8")

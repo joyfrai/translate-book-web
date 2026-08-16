@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 
 
-TARGET_LANGUAGE = "English"
-TARGET_CODE = "en"
+TARGET_LANGUAGE = "Russian"
+TARGET_CODE = "ru"
 MAX_TRANSLATORS = 8
 
 
@@ -22,10 +22,10 @@ def run_logged(command: list[str], cwd: Path, log_path: Path, timeout: int | Non
 
 
 def translate_chunk(repo_root: Path, temp_dir: Path, source: Path, output: Path, log_path: Path) -> None:
-    prompt = f"""Translate exactly one Markdown book chunk from Russian to {TARGET_LANGUAGE}.
+    prompt = f"""Translate exactly one Markdown book chunk from English to {TARGET_LANGUAGE}.
 Read source file: {source}
 Write the complete translation to: {output}
-Rules: preserve Markdown structure, links, images, code and paragraph order; translate only readable Russian text; do not summarize, omit, add commentary, or touch any other files. The output file must be UTF-8 and non-empty."""
+Rules: preserve Markdown structure, links, images, code and paragraph order; translate only readable English text; do not summarize, omit, add commentary, or touch any other files. The output file must be UTF-8 and non-empty."""
     command = [
         "codex",
         "exec",

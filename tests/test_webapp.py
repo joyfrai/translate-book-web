@@ -49,6 +49,7 @@ class WebAppTests(unittest.TestCase):
         response, payload = self.request("GET", "/")
         self.assertEqual(response.status, 200)
         self.assertIn("Файлов пока нет".encode(), payload)
+        self.assertIn("с английского на русский".encode(), payload)
 
     def test_upload_creates_queued_job(self) -> None:
         boundary = "----translate-book-" + uuid.uuid4().hex

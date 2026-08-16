@@ -203,6 +203,13 @@ LANG_CONFIG = {
         'toc_label': 'Contents',
         'pdf_font': 'Georgia',
     },
+    'ru': {
+        'lang_attr': 'ru',
+        'font_family': "Georgia, 'Times New Roman', Times, serif",
+        'font_family_ebook': 'Georgia, "Times New Roman", Times, serif',
+        'toc_label': 'Содержание',
+        'pdf_font': 'Georgia',
+    },
     'ja': {
         'lang_attr': 'ja',
         'font_family': "'Hiragino Mincho ProN', 'Yu Mincho', 'MS Mincho', serif",
