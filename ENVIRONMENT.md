@@ -7,4 +7,4 @@
 - Required tools: `codex`, `ebook-convert` from Calibre, and `pandoc`.
 - Queue: SQLite-backed, one book worker at a time.
 
-The Basic Auth password is loaded from the untracked `.env` file. It must not be committed.
+The web application is public. VirusTotal credentials are loaded from the shared root-owned environment file configured in the systemd unit; they must not be committed.

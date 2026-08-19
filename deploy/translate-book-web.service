@@ -10,6 +10,7 @@ WorkingDirectory=/root/projects/translate-book-web
 Environment=HOME=/root
 Environment=PATH=/root/projects/translate-book-web/.venv:/root/.nvm/versions/node/v25.9.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/root/projects/translate-book-web/.env
+EnvironmentFile=/root/joy-core/security/secrets/.env.virustotal
 ExecStart=/root/projects/translate-book-web/.venv/bin/python -m webapp.run
 Restart=always
 RestartSec=5
