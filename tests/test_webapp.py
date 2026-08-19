@@ -10,8 +10,10 @@ import uuid
 import zipfile
 from pathlib import Path
 
+from webapp import app as webapp_module
 from webapp.app import App, Store, WebServer, page
 from webapp.security import UploadSecurityError
+from webapp.site_styles import SITE_STYLES as APPROVED_SITE_STYLES
 
 
 class AcceptScanner:
@@ -23,6 +25,77 @@ class AcceptScanner:
         self.calls.append((filename, payload))
         if self.error:
             raise self.error
+
+
+class PresentationTests(unittest.TestCase):
+    def test_display_time_omits_seconds_and_timezone(self) -> None:
+        self.assertEqual(
+            webapp_module.format_display_time("2026-08-19T21:16:57+00:00"),
+            "2026-08-19 21:16",
+        )
+
+    def test_desktop_library_layout_stays_stable_while_scrolling(self) -> None:
+        self.assertIn("position: fixed;", APPROVED_SITE_STYLES)
+        self.assertIn("grid-column: 2;", APPROVED_SITE_STYLES)
+        self.assertNotIn("background-attachment: fixed", APPROVED_SITE_STYLES)
+
+    def test_catalog_covers_are_centered_and_statuses_are_neutral(self) -> None:
+        self.assertIn("margin-inline: auto;", APPROVED_SITE_STYLES)
+        self.assertIn(".catalog-book-info { padding-top: 18px; text-align: center; }", APPROVED_SITE_STYLES)
+        self.assertIn(".book-language { justify-content: center;", APPROVED_SITE_STYLES)
+        self.assertIn(".status-queued, .status-processing, .status-done", APPROVED_SITE_STYLES)
+
+    def test_upload_page_omits_internal_scanner_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            payload = page(app)
+        self.assertNotIn("Проверка VirusTotal перед обработкой".encode(), payload)
+
+    def test_done_job_uses_an_accessible_icon_instead_of_colored_text_badge(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app = App(Path(__file__).resolve().parents[1], root / "data")
+            source = root / "book.epub"
+            result = root / "book-ru.epub"
+            source.write_bytes(b"source")
+            result.write_bytes(b"translation")
+            app.store.add("book", source.name, source, len(b"source"))
+            app.store.finish("book", result)
+            markup = webapp_module.job_markup(app, app.store.get("book"))
+        self.assertIn('aria-label="Готово"', markup)
+        self.assertIn("check-circle.svg", markup)
+        self.assertNotIn(">Готово<", markup)
+
+    def test_job_progress_alignment_and_status_icon_contrast_are_stable(self) -> None:
+        self.assertIn("minmax(190px, 220px)", APPROVED_SITE_STYLES)
+        self.assertIn(".status img { width: 15px; height: 15px; filter:", APPROVED_SITE_STYLES)
+
+    def test_lamp_toggle_is_accessible_on_both_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            upload = page(app)
+            library = webapp_module.library_page(app)
+        for payload in (upload, library):
+            self.assertEqual(payload.count(b'class="lamp-toggle"'), 1)
+            self.assertIn(b'aria-pressed="true"', payload)
+            self.assertIn('aria-label="Выключить лампу"'.encode(), payload)
+            self.assertIn(b"lamp-flicker-off", payload)
+            self.assertIn(b'addEventListener("pointerdown"', payload)
+            self.assertIn(b"window.setTimeout(() => setLampState(false), 1200);", payload)
+            self.assertIn(b'window.addEventListener("load", scheduleAutoOff, { once: true });', payload)
+
+    def test_lamp_and_main_atmosphere_have_desktop_states(self) -> None:
+        self.assertIn(".library-app::before", APPROVED_SITE_STYLES)
+        self.assertIn(".library-app::after", APPROVED_SITE_STYLES)
+        self.assertIn("position: fixed;", APPROVED_SITE_STYLES)
+        self.assertIn("library-interior-wide.webp", APPROVED_SITE_STYLES)
+        self.assertIn("background-size: cover, 720px 720px;", APPROVED_SITE_STYLES)
+        self.assertIn(".lamp-toggle", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes lamp-flicker-off", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes lamp-flicker-on", APPROVED_SITE_STYLES)
+        self.assertIn(".lamp-toggle { display: none; }", APPROVED_SITE_STYLES)
+        self.assertIn('.lamp-toggle[data-pointer-focus="true"]:focus-visible { outline: none; }', APPROVED_SITE_STYLES)
+        self.assertNotIn("background-attachment: fixed", APPROVED_SITE_STYLES)
 
 
 class WebAppTests(unittest.TestCase):
@@ -65,6 +138,26 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("до 30 MB".encode(), payload)
         self.assertIn("Как работает перевод".encode(), payload)
         self.assertIn("id=\"file-feedback\"".encode(), payload)
+
+    def test_public_page_uses_approved_library_design(self) -> None:
+        response, payload = self.request("GET", "/")
+        self.assertEqual(response.status, 200)
+        self.assertIn(b'class="library-app upload-app"', payload)
+        self.assertIn(b"/assets/atmosphere/translate-book-crest.webp", payload)
+        self.assertIn(b"assets/atmosphere/library-sidebar-study.webp", payload)
+        self.assertIn("Текущие загрузки".encode(), payload)
+        self.assertNotIn("Последние задачи".encode(), payload)
+        self.assertIn(b'name="source_language"', payload)
+        self.assertIn(b'name="target_language"', payload)
+
+    def test_static_design_asset_is_served_and_traversal_is_rejected(self) -> None:
+        response, payload = self.request("GET", "/assets/atmosphere/translate-book-crest.webp")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Type"), "image/webp")
+        self.assertTrue(payload)
+
+        response, _ = self.request("GET", "/assets/../app.py")
+        self.assertEqual(response.status, 404)
 
     def test_library_is_public_and_empty(self) -> None:
         response, payload = self.request("GET", "/library")
@@ -176,6 +269,25 @@ class WebAppTests(unittest.TestCase):
         self.assertIn(f"/download/{job_id}/translated".encode(), payload)
         self.assertIn("Скачать оригинал · English".encode(), payload)
         self.assertIn("Скачать перевод · Русский".encode(), payload)
+
+    def test_done_job_uses_one_of_twenty_material_cover_themes(self) -> None:
+        job_id = "0123456789abcdef0123456789abcdef"
+        job_dir = self.app.store.jobs_dir / job_id
+        job_dir.mkdir(parents=True)
+        result = job_dir / "translated-book.zip"
+        result.write_bytes(b"zip")
+        source = job_dir / "A Thoughtful Book.epub"
+        source.write_bytes(b"source")
+        self.app.store.add(job_id, "A Thoughtful Book.epub", source, 6)
+        self.app.store.finish(job_id, result)
+
+        response, payload = self.request("GET", "/library")
+        self.assertEqual(response.status, 200)
+        self.assertIn(b'class="book-cover cover-theme-3"', payload)
+        for index in range(20):
+            self.assertIn(f".cover-theme-{index}".encode(), payload)
+        self.assertIn(f"/download/{job_id}/original".encode(), payload)
+        self.assertIn(f"/download/{job_id}/translated".encode(), payload)
 
     def test_upload_rejects_zip_bomb_metadata_before_scanner(self) -> None:
         boundary = "----translate-book-" + uuid.uuid4().hex

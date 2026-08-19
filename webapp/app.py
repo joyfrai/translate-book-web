@@ -24,11 +24,18 @@ from .translate_job import (
     run_translation,
 )
 from .security import UploadSecurityError, VirusTotalError, VirusTotalScanner, validate_payload
+from .site_styles import SITE_STYLES as APPROVED_SITE_STYLES
 
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".epub"}
 BASE_PATH = os.getenv("TRANSLATE_BOOK_BASE_PATH", "").rstrip("/")
+STATIC_ROOT = (Path(__file__).resolve().parent / "static").resolve()
+STATIC_CONTENT_TYPES = {
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+}
 STATUS_LABELS = {
     "queued": "В очереди",
     "processing": "Обрабатывается",
@@ -43,6 +50,35 @@ def app_url(path: str = "/") -> str:
     return f"{BASE_PATH}{path}" if BASE_PATH else path
 
 
+def asset_url(path: str) -> str:
+    return app_url(f"/assets/{path.lstrip('/')}")
+
+
+def icon(name: str, class_name: str = "ui-icon") -> str:
+    return f'<img class="{class_name}" src="{asset_url(f"icons/{name}.svg")}" alt="" aria-hidden="true">'
+
+
+def cover_theme_index(job_id: str) -> int:
+    try:
+        return int(job_id[:8], 16) % 20
+    except ValueError:
+        return sum(ord(character) for character in job_id) % 20
+
+
+def book_count_label(count: int) -> str:
+    remainder_100 = count % 100
+    remainder_10 = count % 10
+    if 11 <= remainder_100 <= 14:
+        word = "книг"
+    elif remainder_10 == 1:
+        word = "книга"
+    elif remainder_10 in {2, 3, 4}:
+        word = "книги"
+    else:
+        word = "книг"
+    return f"{count} {word}"
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -51,6 +87,13 @@ def attachment_header(filename: str) -> str:
     ascii_name = "".join(character if character.isascii() and (character.isalnum() or character in "._-") else "_" for character in filename)
     ascii_name = ascii_name.strip("._") or "download"
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+
+
+def format_display_time(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value.replace("T", " ").replace(" UTC", "").replace("Z", "").rsplit(":", 1)[0]
 
 
 class Store:
@@ -447,20 +490,71 @@ select:hover { border-color: #bcc5d7; }
 def site_header(active: str, library_count: int) -> str:
     upload_class = "nav-link active" if active == "upload" else "nav-link"
     library_class = "nav-link active" if active == "library" else "nav-link"
-    return f"""<header class="site-header">
-  <a class="brand" href="{app_url('/')}" aria-label="Translate Book — загрузка">
-    <span class="brand-mark" aria-hidden="true">↗</span>
-    <span class="brand-copy"><strong>Translate Book</strong><small>Перевод книг</small></span>
+    return f"""<aside class="app-navigation lamp-is-on">
+  <a class="app-brand" href="{app_url('/')}" aria-label="Translate Book — загрузить книгу">
+    <img src="{asset_url('atmosphere/translate-book-crest.webp')}" alt="">
+    <span>Translate Book</span>
   </a>
-  <nav class="site-nav" aria-label="Основная навигация">
-    <a class="{upload_class}" href="{app_url('/')}">Загрузить</a>
-    <a class="{library_class}" href="{app_url('/library')}">Библиотека <span class="nav-count">{library_count}</span></a>
+  <nav aria-label="Основная навигация">
+    <a class="{upload_class}" href="{app_url('/')}">{icon('upload-simple', 'nav-icon')}<span>Загрузить</span></a>
+    <a class="{library_class}" href="{app_url('/library')}">{icon('book-open', 'nav-icon')}<span>Библиотека</span><span class="nav-count">{library_count}</span></a>
   </nav>
-</header>"""
+  <button class="lamp-toggle" type="button" aria-label="Выключить лампу" aria-pressed="true"></button>
+</aside>"""
 
 
 def site_footer() -> str:
-    return "<footer class=\"site-footer\">Translate Book · Светлая версия каталога</footer>"
+    return "<footer class=\"site-footer\">Translate Book · Перевод книг</footer>"
+
+
+def lamp_interaction_script() -> str:
+    return """<script>
+  (() => {
+    const navigation = document.querySelector(".app-navigation");
+    const toggle = document.querySelector(".lamp-toggle");
+    if (!navigation || !toggle || window.matchMedia("(max-width: 980px)").matches) return;
+
+    let isOn = true;
+    let isAnimating = false;
+    toggle.addEventListener("pointerdown", () => toggle.dataset.pointerFocus = "true");
+    toggle.addEventListener("blur", () => toggle.removeAttribute("data-pointer-focus"));
+    const syncA11y = () => {
+      toggle.setAttribute("aria-pressed", String(isOn));
+      toggle.setAttribute("aria-label", isOn ? "Выключить лампу" : "Включить лампу");
+    };
+    const finish = (turnOn, animationClass) => {
+      navigation.classList.remove(animationClass);
+      navigation.classList.toggle("lamp-is-off", !turnOn);
+      navigation.classList.toggle("lamp-is-on", turnOn);
+      isOn = turnOn;
+      isAnimating = false;
+      syncA11y();
+    };
+
+    const setLampState = (turnOn) => {
+      if (isAnimating || turnOn === isOn) return;
+      const animationClass = turnOn ? "lamp-flicker-on" : "lamp-flicker-off";
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        finish(turnOn, animationClass);
+        return;
+      }
+      isAnimating = true;
+      navigation.classList.add(animationClass);
+      navigation.addEventListener("animationend", (event) => {
+        if (event.animationName !== animationClass) return;
+        finish(turnOn, animationClass);
+      }, { once: true });
+    };
+
+    toggle.addEventListener("click", () => setLampState(!isOn));
+    const scheduleAutoOff = () => window.setTimeout(() => setLampState(false), 1200);
+    if (document.readyState === "complete") {
+      scheduleAutoOff();
+    } else {
+      window.addEventListener("load", scheduleAutoOff, { once: true });
+    }
+  })();
+</script>"""
 
 
 def job_markup(app: App, job: sqlite3.Row) -> str:
@@ -477,21 +571,26 @@ def job_markup(app: App, job: sqlite3.Row) -> str:
         progress_label, progress_value = "Подготовка", 0
     result = ""
     if status == "done" and job["result_path"] and Path(job["result_path"]).is_file():
-        result = f'<a class="button button-secondary" href="{app_url(f"/download/{job["id"]}")}">Скачать ZIP <span aria-hidden="true">↗</span></a>'
+        result = f'<a class="button" href="{app_url(f"/download/{job["id"]}")}">{icon("download-simple")}<span>Скачать ZIP</span></a>'
     error = f'<div class="error">{html.escape(job["error"])}</div>' if job["error"] else ""
+    status_label = html.escape(STATUS_LABELS.get(status, status))
+    status_icon = {
+        "queued": "clock-countdown",
+        "processing": "spinner-gap",
+        "done": "check-circle",
+        "failed": "warning-circle",
+    }.get(status, "warning-circle")
     return f"""<li class="job">
-  <div class="job-main">
-    <div class="job-title"><strong title="{html.escape(job["original_name"])}">{html.escape(job["original_name"])}</strong><span class="status status-{html.escape(status)}">{html.escape(STATUS_LABELS.get(status, status))}</span></div>
-    <div class="job-meta"><span>{job["size_bytes"] / 1024 / 1024:.1f} MB</span><span>{html.escape(job["source_language"])} → {html.escape(job["target_language"])}</span><span>{job["created_at"].replace("T", " ").replace("+00:00", " UTC")}</span></div>
-    <div class="progress-wrap"><div class="progress-track" role="progressbar" aria-label="Прогресс перевода" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{progress_value:.0f}"><span style="--progress: {progress_value:.1f}%"></span></div><span class="progress-label">{progress_label}</span></div>
-  </div>
+  <div class="job-main"><div class="job-title"><strong title="{html.escape(job["original_name"])}">{html.escape(job["original_name"])}</strong><span class="status status-{html.escape(status)}" role="img" aria-label="{status_label}" title="{status_label}">{icon(status_icon, 'status-icon')}</span></div><div class="job-meta"><span>{job["size_bytes"] / 1024 / 1024:.1f} МБ</span><span>{html.escape(job["source_language"])} → {html.escape(job["target_language"])}</span><span>{format_display_time(job["created_at"])}</span></div></div>
+  <div class="progress-wrap"><div class="progress-track" role="progressbar" aria-label="Прогресс перевода" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{progress_value:.0f}"><span style="--progress: {progress_value:.1f}%"></span></div><span class="progress-label">{progress_label}</span></div>
   <div class="job-actions">{result}</div>
   {error}
 </li>"""
 
 
 def page(app: App, message: str = "") -> bytes:
-    jobs = "".join(job_markup(app, job) for job in app.store.list()) or '<li class="empty">Файлов пока нет.</li>'
+    job_rows = "".join(job_markup(app, job) for job in app.store.list())
+    jobs = f'<ul class="job-list">{job_rows}</ul>' if job_rows else '<div class="empty-state"><strong>Файлов пока нет.</strong><span>После выбора книги задача появится здесь.</span></div>'
     notice = f'<div class="notice" role="status">{html.escape(message)}</div>' if message else ""
     source_options = "".join(
         f'<option value="{code}"{" selected" if code == DEFAULT_SOURCE_CODE else ""}>{html.escape(name)}</option>'
@@ -503,35 +602,25 @@ def page(app: App, message: str = "") -> bytes:
     )
     library_count = len(app.store.list_finished())
     return f"""<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f7fb">
-<title>Translate Book — перевод книг</title>{SITE_STYLES}</head><body>
-<div class="site-shell">{site_header("upload", library_count)}
-<main>
-  <section class="hero">
-    <span class="eyebrow">Перевод книг</span>
-    <h1>Из исходника —<br>в новую библиотеку.</h1>
-    <p class="lede">Загрузите книгу, выберите языки и получите готовый перевод в удобном ZIP-архиве.</p>
-    <div class="hero-note"><span class="hero-note-icon" aria-hidden="true">✓</span>Каждый файл проходит проверку перед обработкой</div>
-  </section>
-  <section class="process-strip" aria-label="Как работает перевод">
-    <div class="process-step"><strong>01 · Файл</strong><span>PDF, DOCX или EPUB</span></div>
-    <div class="process-step"><strong>02 · Языки</strong><span>Источник и перевод</span></div>
-    <div class="process-step"><strong>03 · Результат</strong><span>ZIP с готовой книгой</span></div>
-  </section>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#07100e">
+<title>Translate Book — загрузить книгу</title>{APPROVED_SITE_STYLES}</head><body>
+<div class="library-app upload-app">{site_header("upload", library_count)}
+<div class="app-content"><main>
+  <header class="page-header"><div><h1>Загрузить книгу</h1><p>PDF, DOCX или EPUB, до 30 MB</p></div><a class="quiet-link" href="{app_url('/library')}">{icon('book-open')}<span>Открыть библиотеку</span></a></header>
   {notice}
-  <section class="panel upload-panel" aria-labelledby="upload-title">
-    <div class="panel-heading"><span class="panel-icon" aria-hidden="true">＋</span><div><h2 id="upload-title">Новая книга</h2><p>Поддерживаются PDF, DOCX и EPUB до 30 MB.</p></div></div>
-    <form class="upload-form" action="{app_url('/upload')}" method="post" enctype="multipart/form-data">
-      <div class="field"><div class="field-label"><span>Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-drop" id="file-drop" for="book"><span class="file-icon" aria-hidden="true">▤</span><span class="file-copy"><strong id="file-name">Выберите файл с устройства</strong><span id="file-meta">PDF, DOCX или EPUB</span></span><span class="file-limit">Обзор</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл появится здесь после выбора.</p></div>
+  <form class="upload-workspace" action="{app_url('/upload')}" method="post" enctype="multipart/form-data" aria-labelledby="upload-title">
+    <span class="sr-only">Как работает перевод</span>
+    <div class="file-dropzone"><div class="field-label"><span id="upload-title">Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-picker" id="file-drop" for="book"><img class="file-visual" src="{asset_url('icons/file-arrow-up.svg')}" alt=""><strong id="file-name">Выбрать файл</strong><span id="file-meta">PDF, DOCX или EPUB</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл не выбран.</p></div>
+    <div class="translation-settings">
       <div class="language-grid"><div><label class="field-label" for="source_language"><span>Язык оригинала</span></label><div class="select-wrap"><select id="source_language" name="source_language">{source_options}</select></div></div><div><label class="field-label" for="target_language"><span>Язык перевода</span></label><div class="select-wrap"><select id="target_language" name="target_language">{language_options}</select></div></div></div>
-      <div class="form-actions"><div class="security-note"><strong aria-hidden="true">✓</strong><span>Проверка VirusTotal и защита от архивных угроз</span></div><button class="button button-primary" type="submit">Начать перевод <span aria-hidden="true">→</span></button></div>
-    </form>
+      <div class="form-actions"><button class="button button-primary" type="submit">{icon('upload-simple')}<span>Начать перевод</span></button></div>
+    </div>
+  </form>
+  <section class="tasks-section" aria-labelledby="jobs-title">
+    <div class="section-heading"><div><h2 id="jobs-title">Текущие загрузки</h2></div><a class="refresh-link" href="{app_url('/')}">{icon('arrow-clockwise')}<span>Обновить</span></a></div>
+    {jobs}
   </section>
-  <section class="section" aria-labelledby="jobs-title">
-    <div class="section-head"><div><h2 id="jobs-title">Последние задачи</h2><p>Статус обновится после перезагрузки страницы.</p></div><a class="text-link" href="{app_url('/')}">Обновить список ↻</a></div>
-    <ul class="panel job-list">{jobs}</ul>
-  </section>
-</main>{site_footer()}</div>
+</main>{site_footer()}</div></div>
 <script>
   const bookInput = document.getElementById("book");
   if (bookInput) {{
@@ -545,12 +634,13 @@ def page(app: App, message: str = "") -> bytes:
       const sizeMb = file.size / (1024 * 1024);
       fileName.textContent = file.name;
       fileMeta.textContent = `${{sizeMb.toFixed(1)}} MB · файл выбран`;
-      feedback.textContent = sizeMb <= 30 ? "Файл подходит по размеру. Можно запускать перевод." : "Файл больше лимита 30 MB.";
+      feedback.textContent = sizeMb <= 30 ? "Файл выбран и готов к загрузке." : "Файл больше лимита 30 МБ.";
       feedback.classList.toggle("is-error", sizeMb > 30);
       fileDrop.classList.add("has-file");
     }});
   }}
 </script>
+{lamp_interaction_script()}
 </body></html>""".encode("utf-8")
 
 
@@ -563,28 +653,50 @@ def library_page(app: App) -> bytes:
     if finished:
         cards = []
         for job in finished:
-            title = html.escape(job["original_name"])
-            initials = html.escape("".join(part[0] for part in Path(job["original_name"]).stem.split()[:2]).upper() or "TB")
+            original_name = job["original_name"]
+            title = html.escape(Path(original_name).stem or original_name)
+            original_title = html.escape(original_name)
             job_id = html.escape(job["id"])
             source_language = html.escape(job["source_language"])
             target_language = html.escape(job["target_language"])
+            theme_index = cover_theme_index(job["id"])
+            created_at = format_display_time(job["created_at"])
             cards.append(
-                f"""<article class="book-card">
-  <div class="book-cover" aria-hidden="true"><span>{initials}</span><span>Перевод</span></div>
-  <div class="book-card-body"><div class="book-card-meta"><strong>{target_language}</strong><span>{job["created_at"].replace("T", " ").replace("+00:00", " UTC")}</span></div><h2 title="{title}">{title}</h2><p>{source_language} → {target_language} · готовый ZIP-архив</p><div class="book-downloads"><a class="button button-secondary" href="{app_url(f"/download/{job_id}/original")}">Скачать оригинал · {source_language} <span aria-hidden="true">↗</span></a><a class="button button-primary" href="{app_url(f"/download/{job_id}/translated")}">Скачать перевод · {target_language} <span aria-hidden="true">↗</span></a></div></div>
+                f"""<article class="catalog-book" data-title="{title.casefold()}">
+  <div class="book-cover cover-theme-{theme_index}" aria-hidden="true"><div class="book-cover-frame"><span class="book-cover-title">{title}</span><span class="book-cover-rule"></span><span class="book-cover-author">Перевод · {target_language}</span></div></div>
+  <div class="catalog-book-info"><h2 title="{original_title}">{title}</h2><p class="book-date">{created_at}</p><p class="book-language">{icon('arrows-left-right')}<span>{source_language} → {target_language}</span></p><div class="book-downloads"><a class="button" href="{app_url(f"/download/{job_id}/original")}">{icon('download-simple')}<span>Скачать оригинал · {source_language}</span></a><a class="button button-primary" href="{app_url(f"/download/{job_id}/translated")}">{icon('download-simple')}<span>Скачать перевод · {target_language}</span></a></div></div>
 </article>"""
             )
         books = "".join(cards)
     else:
-        books = '<div class="panel empty">Переведённых книг пока нет.</div>'
+        books = '<div class="empty-state catalog-empty"><strong>Переведённых книг пока нет.</strong><span>Готовые переводы появятся здесь.</span></div>'
     return f"""<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f7fb">
-<title>Библиотека — Translate Book</title>{SITE_STYLES}</head><body>
-<div class="site-shell">{site_header("library", len(finished))}
-<main>
-  <section class="hero library-hero"><span class="eyebrow">Публичный каталог</span><h1>Книги, которые<br>уже готовы.</h1><p class="lede">Здесь собраны переводы, доступные для скачивания. Без поиска и лишнего шума — только библиотека.</p></section>
-  <section class="section" aria-labelledby="library-title"><div class="section-head"><div><h2 id="library-title">Все переводы</h2><p>{len(finished)} {"книга" if len(finished) == 1 else "книг"} в каталоге</p></div><a class="text-link" href="{app_url('/')}">Загрузить книгу →</a></div><div class="library-grid">{books}</div></section>
-</main>{site_footer()}</div>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#07100e">
+<title>Библиотека — Translate Book</title>{APPROVED_SITE_STYLES}</head><body>
+<div class="library-app catalog-app">{site_header("library", len(finished))}
+<div class="app-content"><main>
+  <header class="page-header catalog-header"><div><h1>Библиотека</h1><p>Публичный каталог · {book_count_label(len(finished))}</p></div><div class="catalog-tools"><label class="search-field"><span class="sr-only">Найти книгу</span><img src="{asset_url('icons/magnifying-glass.svg')}" alt=""><input id="catalog-search" type="search" placeholder="Найти книгу" autocomplete="off"></label><a class="button button-primary" href="{app_url('/')}">{icon('upload-simple')}<span>Загрузить книгу</span></a></div></header>
+  <section class="catalog-grid" id="catalog-grid" aria-label="Каталог книг">{books}</section>
+  <p class="empty-state catalog-empty is-hidden" id="search-empty">Ничего не найдено.</p>
+</main>{site_footer()}</div></div>
+<script>
+  const catalogSearch = document.getElementById("catalog-search");
+  if (catalogSearch) {{
+    const books = Array.from(document.querySelectorAll(".catalog-book"));
+    const empty = document.getElementById("search-empty");
+    catalogSearch.addEventListener("input", () => {{
+      const query = catalogSearch.value.trim().toLocaleLowerCase();
+      let visible = 0;
+      books.forEach((book) => {{
+        const matches = !query || book.dataset.title.includes(query);
+        book.classList.toggle("is-hidden", !matches);
+        if (matches) visible += 1;
+      }});
+      empty.classList.toggle("is-hidden", visible > 0 || books.length === 0);
+    }});
+  }}
+</script>
+{lamp_interaction_script()}
 </body></html>""".encode("utf-8")
 
 
@@ -603,6 +715,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/assets/"):
+            relative_path = unquote(path.removeprefix("/assets/"))
+            asset_path = (STATIC_ROOT / relative_path).resolve()
+            try:
+                is_safe = asset_path.is_relative_to(STATIC_ROOT)
+            except OSError:
+                is_safe = False
+            content_type = STATIC_CONTENT_TYPES.get(asset_path.suffix.lower())
+            if not is_safe or content_type is None or not asset_path.is_file():
+                self.send_bytes(b"Not found", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
+                return
+            payload = asset_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path == "/favicon.ico":
             self.send_response(HTTPStatus.NO_CONTENT)
             self.end_headers()
