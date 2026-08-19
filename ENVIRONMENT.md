@@ -2,7 +2,7 @@
 
 - Runtime: Python 3.12 virtual environment at `.venv/`.
 - Service: `translate-book-web.service`.
-- Bind: `0.0.0.0:3100`.
+- Bind: `127.0.0.1:3100` (nginx public route: `https://yagix.ru/translatebook/`).
 - Persistent data: `/root/projects/translate-book-web/data/`.
 - Required tools: `codex`, `ebook-convert` from Calibre, and `pandoc`.
 - Queue: SQLite-backed, one book worker at a time.

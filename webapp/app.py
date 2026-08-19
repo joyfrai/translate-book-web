@@ -28,12 +28,19 @@ from .security import UploadSecurityError, VirusTotalError, VirusTotalScanner, v
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".epub"}
+BASE_PATH = os.getenv("TRANSLATE_BOOK_BASE_PATH", "").rstrip("/")
 STATUS_LABELS = {
     "queued": "В очереди",
     "processing": "Обрабатывается",
     "done": "Готово",
     "failed": "Ошибка",
 }
+
+
+def app_url(path: str = "/") -> str:
+    if path == "/":
+        return f"{BASE_PATH}/" if BASE_PATH else "/"
+    return f"{BASE_PATH}{path}" if BASE_PATH else path
 
 
 def utc_now() -> str:
@@ -441,13 +448,13 @@ def site_header(active: str, library_count: int) -> str:
     upload_class = "nav-link active" if active == "upload" else "nav-link"
     library_class = "nav-link active" if active == "library" else "nav-link"
     return f"""<header class="site-header">
-  <a class="brand" href="/" aria-label="Translate Book — загрузка">
+  <a class="brand" href="{app_url('/')}" aria-label="Translate Book — загрузка">
     <span class="brand-mark" aria-hidden="true">↗</span>
     <span class="brand-copy"><strong>Translate Book</strong><small>Перевод книг</small></span>
   </a>
   <nav class="site-nav" aria-label="Основная навигация">
-    <a class="{upload_class}" href="/">Загрузить</a>
-    <a class="{library_class}" href="/library">Библиотека <span class="nav-count">{library_count}</span></a>
+    <a class="{upload_class}" href="{app_url('/')}">Загрузить</a>
+    <a class="{library_class}" href="{app_url('/library')}">Библиотека <span class="nav-count">{library_count}</span></a>
   </nav>
 </header>"""
 
@@ -470,7 +477,7 @@ def job_markup(app: App, job: sqlite3.Row) -> str:
         progress_label, progress_value = "Подготовка", 0
     result = ""
     if status == "done" and job["result_path"] and Path(job["result_path"]).is_file():
-        result = f'<a class="button button-secondary" href="/download/{html.escape(job["id"])}">Скачать ZIP <span aria-hidden="true">↗</span></a>'
+        result = f'<a class="button button-secondary" href="{app_url(f"/download/{job["id"]}")}">Скачать ZIP <span aria-hidden="true">↗</span></a>'
     error = f'<div class="error">{html.escape(job["error"])}</div>' if job["error"] else ""
     return f"""<li class="job">
   <div class="job-main">
@@ -514,14 +521,14 @@ def page(app: App, message: str = "") -> bytes:
   {notice}
   <section class="panel upload-panel" aria-labelledby="upload-title">
     <div class="panel-heading"><span class="panel-icon" aria-hidden="true">＋</span><div><h2 id="upload-title">Новая книга</h2><p>Поддерживаются PDF, DOCX и EPUB до 30 MB.</p></div></div>
-    <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+    <form class="upload-form" action="{app_url('/upload')}" method="post" enctype="multipart/form-data">
       <div class="field"><div class="field-label"><span>Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-drop" id="file-drop" for="book"><span class="file-icon" aria-hidden="true">▤</span><span class="file-copy"><strong id="file-name">Выберите файл с устройства</strong><span id="file-meta">PDF, DOCX или EPUB</span></span><span class="file-limit">Обзор</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл появится здесь после выбора.</p></div>
       <div class="language-grid"><div><label class="field-label" for="source_language"><span>Язык оригинала</span></label><div class="select-wrap"><select id="source_language" name="source_language">{source_options}</select></div></div><div><label class="field-label" for="target_language"><span>Язык перевода</span></label><div class="select-wrap"><select id="target_language" name="target_language">{language_options}</select></div></div></div>
       <div class="form-actions"><div class="security-note"><strong aria-hidden="true">✓</strong><span>Проверка VirusTotal и защита от архивных угроз</span></div><button class="button button-primary" type="submit">Начать перевод <span aria-hidden="true">→</span></button></div>
     </form>
   </section>
   <section class="section" aria-labelledby="jobs-title">
-    <div class="section-head"><div><h2 id="jobs-title">Последние задачи</h2><p>Статус обновится после перезагрузки страницы.</p></div><a class="text-link" href="/">Обновить список ↻</a></div>
+    <div class="section-head"><div><h2 id="jobs-title">Последние задачи</h2><p>Статус обновится после перезагрузки страницы.</p></div><a class="text-link" href="{app_url('/')}">Обновить список ↻</a></div>
     <ul class="panel job-list">{jobs}</ul>
   </section>
 </main>{site_footer()}</div>
@@ -564,7 +571,7 @@ def library_page(app: App) -> bytes:
             cards.append(
                 f"""<article class="book-card">
   <div class="book-cover" aria-hidden="true"><span>{initials}</span><span>Перевод</span></div>
-  <div class="book-card-body"><div class="book-card-meta"><strong>{target_language}</strong><span>{job["created_at"].replace("T", " ").replace("+00:00", " UTC")}</span></div><h2 title="{title}">{title}</h2><p>{source_language} → {target_language} · готовый ZIP-архив</p><div class="book-downloads"><a class="button button-secondary" href="/download/{job_id}/original">Скачать оригинал · {source_language} <span aria-hidden="true">↗</span></a><a class="button button-primary" href="/download/{job_id}/translated">Скачать перевод · {target_language} <span aria-hidden="true">↗</span></a></div></div>
+  <div class="book-card-body"><div class="book-card-meta"><strong>{target_language}</strong><span>{job["created_at"].replace("T", " ").replace("+00:00", " UTC")}</span></div><h2 title="{title}">{title}</h2><p>{source_language} → {target_language} · готовый ZIP-архив</p><div class="book-downloads"><a class="button button-secondary" href="{app_url(f"/download/{job_id}/original")}">Скачать оригинал · {source_language} <span aria-hidden="true">↗</span></a><a class="button button-primary" href="{app_url(f"/download/{job_id}/translated")}">Скачать перевод · {target_language} <span aria-hidden="true">↗</span></a></div></div>
 </article>"""
             )
         books = "".join(cards)
@@ -576,7 +583,7 @@ def library_page(app: App) -> bytes:
 <div class="site-shell">{site_header("library", len(finished))}
 <main>
   <section class="hero library-hero"><span class="eyebrow">Публичный каталог</span><h1>Книги, которые<br>уже готовы.</h1><p class="lede">Здесь собраны переводы, доступные для скачивания. Без поиска и лишнего шума — только библиотека.</p></section>
-  <section class="section" aria-labelledby="library-title"><div class="section-head"><div><h2 id="library-title">Все переводы</h2><p>{len(finished)} {"книга" if len(finished) == 1 else "книг"} в каталоге</p></div><a class="text-link" href="/">Загрузить книгу →</a></div><div class="library-grid">{books}</div></section>
+  <section class="section" aria-labelledby="library-title"><div class="section-head"><div><h2 id="library-title">Все переводы</h2><p>{len(finished)} {"книга" if len(finished) == 1 else "книг"} в каталоге</p></div><a class="text-link" href="{app_url('/')}">Загрузить книгу →</a></div><div class="library-grid">{books}</div></section>
 </main>{site_footer()}</div>
 </body></html>""".encode("utf-8")
 
@@ -743,7 +750,7 @@ class Handler(BaseHTTPRequestHandler):
             target_language,
         )
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/")
+        self.send_header("Location", app_url("/"))
         self.end_headers()
 
 
@@ -758,12 +765,13 @@ class WebServer(ThreadingHTTPServer):
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     data_dir = Path(os.getenv("TRANSLATE_BOOK_DATA_DIR", str(repo_root / "data"))).resolve()
+    host = os.getenv("TRANSLATE_BOOK_HOST", "127.0.0.1")
     port = int(os.getenv("TRANSLATE_BOOK_PORT", "3100"))
     app = App(repo_root, data_dir, scanner=VirusTotalScanner.from_env())
     app.worker.start()
-    server = WebServer(("0.0.0.0", port), app)
+    server = WebServer((host, port), app)
     try:
-        print(f"translate-book-web listening on 0.0.0.0:{port}", flush=True)
+        print(f"translate-book-web listening on {host}:{port}", flush=True)
         server.serve_forever()
     finally:
         app.worker.stop()
