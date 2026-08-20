@@ -491,16 +491,24 @@ def site_header(active: str, library_count: int) -> str:
     upload_class = "nav-link active" if active == "upload" else "nav-link"
     library_class = "nav-link active" if active == "library" else "nav-link"
     return f"""<aside class="app-navigation lamp-is-on">
-  <a class="app-brand" href="{app_url('/')}" aria-label="Translate Book — загрузить книгу">
-    <img src="{asset_url('atmosphere/translate-book-crest.webp')}" alt="">
-    <span>Translate Book</span>
-  </a>
+  <div class="brand-lockup">
+    <a class="app-brand" href="{app_url('/')}" aria-label="Translate Book — загрузить книгу">
+      <img src="{asset_url('atmosphere/translate-book-crest.webp')}" alt="">
+      <span>Translate Book</span>
+    </a>
+    <button class="mobile-crest-toggle" type="button" aria-label="Разбудить библиотеку"></button>
+  </div>
   <nav aria-label="Основная навигация">
     <a class="{upload_class}" href="{app_url('/')}">{icon('upload-simple', 'nav-icon')}<span>Загрузить</span></a>
     <a class="{library_class}" href="{app_url('/library')}">{icon('book-open', 'nav-icon')}<span>Библиотека</span><span class="nav-count">{library_count}</span></a>
   </nav>
   <button class="lamp-toggle" type="button" aria-label="Выключить лампу" aria-pressed="true"></button>
-</aside>"""
+</aside>
+<figure class="lamp-easter-egg-message" role="dialog" aria-labelledby="lamp-quote-text" aria-hidden="true">
+  <button class="lamp-easter-egg-close" type="button" aria-label="Закрыть цитату"><span aria-hidden="true">×</span></button>
+  <blockquote id="lamp-quote-text">«Многие упорны в отношении однажды избранного пути, немногие — в отношении цели».</blockquote>
+  <figcaption>Фридрих Ницше</figcaption>
+</figure>"""
 
 
 def site_footer() -> str:
@@ -512,10 +520,44 @@ def lamp_interaction_script() -> str:
   (() => {
     const navigation = document.querySelector(".app-navigation");
     const toggle = document.querySelector(".lamp-toggle");
-    if (!navigation || !toggle || window.matchMedia("(max-width: 980px)").matches) return;
+    const app = navigation?.closest(".library-app");
+    const easterEggMessage = document.querySelector(".lamp-easter-egg-message");
+    const closeEasterEgg = document.querySelector(".lamp-easter-egg-close");
+    const mobileCrestToggle = document.querySelector(".mobile-crest-toggle");
+    if (!navigation || !toggle || !app || !easterEggMessage || !closeEasterEgg || !mobileCrestToggle) return;
+
+    const mobileEasterEggActive = "mobile-easter-egg-active";
+    const dismissEasterEgg = () => {
+      app.classList.remove("lamp-easter-egg-active", mobileEasterEggActive);
+      easterEggMessage.setAttribute("aria-hidden", "true");
+    };
+    closeEasterEgg.addEventListener("click", dismissEasterEgg);
+
+    let mobileTapCount = 0;
+    let mobileTapTimer;
+    const resetMobileTaps = () => {
+      mobileTapCount = 0;
+      window.clearTimeout(mobileTapTimer);
+    };
+    mobileCrestToggle.addEventListener("click", () => {
+      if (!window.matchMedia("(max-width: 640px)").matches) return;
+      if (app.classList.contains(mobileEasterEggActive)) return;
+      if (mobileTapCount === 0) {
+        mobileTapTimer = window.setTimeout(resetMobileTaps, 3000);
+      }
+      mobileTapCount += 1;
+      if (mobileTapCount >= 7) {
+        resetMobileTaps();
+        app.classList.add(mobileEasterEggActive);
+        easterEggMessage.setAttribute("aria-hidden", "false");
+        closeEasterEgg.focus({ preventScroll: true });
+      }
+    });
+    if (window.matchMedia("(max-width: 980px)").matches) return;
 
     let isOn = true;
     let isAnimating = false;
+    let manualToggleCount = 0;
     toggle.addEventListener("pointerdown", () => toggle.dataset.pointerFocus = "true");
     toggle.addEventListener("blur", () => toggle.removeAttribute("data-pointer-focus"));
     const syncA11y = () => {
@@ -546,7 +588,18 @@ def lamp_interaction_script() -> str:
       }, { once: true });
     };
 
-    toggle.addEventListener("click", () => setLampState(!isOn));
+    const triggerEasterEgg = () => {
+      app.classList.add("lamp-easter-egg-active");
+      easterEggMessage.setAttribute("aria-hidden", "false");
+      closeEasterEgg.focus({ preventScroll: true });
+    };
+
+    toggle.addEventListener("click", () => {
+      if (isAnimating) return;
+      manualToggleCount += 1;
+      if (manualToggleCount % 16 === 0) triggerEasterEgg();
+      setLampState(!isOn);
+    });
     const scheduleAutoOff = () => window.setTimeout(() => setLampState(false), 1200);
     if (document.readyState === "complete") {
       scheduleAutoOff();

@@ -40,7 +40,14 @@
 - All desktop progress bars have identical left/right coordinates whether or not a download button is present.
 - Desktop sidebar remains fixed from `navTop = 0` to `navBottom = viewportHeight` after scrolling; its divider no longer ends with page content.
 - The lamp hotspot is visually invisible for pointer input, exposes `aria-pressed` and a changing action label, remains on for 1.2 seconds after `window.load`, then automatically flickers and settles off; subsequent clicks still flicker in both directions.
-- Lamp-off settles at shade opacity `.76`; lamp-on settles at `0`. Sampled intermediate values confirm multiple visible flickers before each final state.
+- Every 16th accepted manual lamp click activates the easter-egg scene. Browser evidence confirms activation at click 16 and again at click 32 without reloading. Automatic switch-off does not increment the counter.
+- The persistent card quotes Nietzsche, uses the existing editorial typeface, has a textured `rgba(5, 12, 10, .92)` backing, and exposes an accessible dialog label. A click outside leaves it visible; only the labelled close button removes it.
+- Lamp-off settles at shade opacity `.66`; lamp-on settles at `0`. The sidebar base overlay is now `.28`, making the lamp noticeably brighter while retaining navigation contrast.
+- The main fixed atmosphere overlay is now `.43`, revealing more of the globe and book stack without overtaking catalog content.
+- On mobile widths up to 640 px, the existing crest has a semantic 44 × 44 px hit target. Six rapid taps leave the interface unchanged; the seventh within three seconds opens the persistent Nietzsche bottom sheet, pulses the crest, and lifts catalog covers by 6 px in a staggered wave.
+- The mobile tap window resets after three seconds, the scene repeats after another seven taps without reload, taps outside do not dismiss it, and the existing labelled cross remains the only close action. Browser checks covered both `/library` and `/`; the brand text still navigates to `/` while crest taps preserve the current URL.
+- At 390 × 845 CSS px the mobile quote keeps approximately 16 px side and bottom insets, the document has zero horizontal overflow, and focus moves to «Закрыть цитату». Above 640 px the mobile hit target is hidden; at 1487 px the fixed desktop sidebar and 16-click lamp trigger remain intact.
+- The crest handler rechecks the current 640 px media query on every tap. Browser verification loaded the page at 1487 px, changed to 390 px without reload, and successfully triggered the mobile scene after seven taps, avoiding an inert control after responsive width changes.
 - The main globe/books atmosphere uses fixed pseudo-layers rather than `background-attachment: fixed`; both layers remain fixed while content scrolls and revert to absolute positioning below 980 px. The image uses `cover` across the full area from the 230 px sidebar edge to the right viewport edge, removing the visible capped-image boundary on wide screens.
 - Mobile catalog and upload page have no horizontal overflow.
 - No focused crop beyond the upload status evidence was needed: title, metadata, icons, and controls are readable in the 1487 px full-width captures.
@@ -53,10 +60,12 @@
 4. Earlier P2: sidebar divider moved/ended during scroll and `background-attachment` caused visual jank. Fixed with a viewport-fixed, paint-contained desktop sidebar and dedicated fixed pseudo-layers for the main atmosphere. Post-fix evidence: `navTop 0`, `navBottom 1058`, both atmosphere layers `position: fixed` at `scrollY 436`.
 5. Lamp iteration P2: the invisible hotspot briefly showed a large focus ring after pointer activation. Fixed by distinguishing pointer focus while preserving the keyboard-only `focus-visible` outline. Post-fix pointer evidence reports `outline: none`.
 6. Follow-up P2: the atmosphere image was capped at `1180px`, exposing a rectangular image edge on wide screens. Fixed by sizing the fixed layer with `cover`; browser evidence reports an app width equal to the viewport width and no horizontal overflow.
+7. Easter-egg iteration: the approved desktop scene reuses only existing assets. At the 16th and 32nd manual triggers the background zoom, crest pulse, cover wave, and attributed quote card all became active. The card persisted through an outside click and closed only through its own button.
+8. Mobile easter-egg iteration: seven rapid taps on the existing crest trigger a bottom-sheet adaptation of the same quote. Browser evidence confirms the 6/7 threshold, three-second reset, repeatability, close-only behavior, upload-page fallback without covers, 44 px target, and desktop isolation.
 
 ## Verification
 
-- `python3 -m unittest discover -s tests -v` — 256 tests passed.
+- `python3 -m unittest discover -s tests -v` — 259 tests passed.
 - Browser timing evidence: at 900 ms the lamp is on; at 1350 ms `lamp-flicker-off` is active; at 1950 ms the lamp is off with `aria-pressed=false`. Checks also covered both manual lamp states, fixed full-width atmosphere sizing, desktop upload/progress, and 394 px mobile layouts. Browser console: no errors.
 
 final result: passed

@@ -97,6 +97,56 @@ class PresentationTests(unittest.TestCase):
         self.assertIn('.lamp-toggle[data-pointer-focus="true"]:focus-visible { outline: none; }', APPROVED_SITE_STYLES)
         self.assertNotIn("background-attachment: fixed", APPROVED_SITE_STYLES)
 
+    def test_every_sixteenth_manual_lamp_toggle_triggers_easter_egg(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            upload = page(app)
+            library = webapp_module.library_page(app)
+        for payload in (upload, library):
+            self.assertEqual(payload.count(b'class="lamp-easter-egg-message"'), 1)
+            self.assertIn("Многие упорны в отношении однажды избранного пути".encode(), payload)
+            self.assertIn("Фридрих Ницше".encode(), payload)
+            self.assertNotIn("Хватит тыркать".encode(), payload)
+            self.assertIn(b'role="dialog" aria-labelledby="lamp-quote-text"', payload)
+            self.assertIn(b'class="lamp-easter-egg-close"', payload)
+            self.assertIn('aria-label="Закрыть цитату"'.encode(), payload)
+            self.assertIn(b"let manualToggleCount = 0;", payload)
+            self.assertIn(b"manualToggleCount += 1;", payload)
+            self.assertIn(b"manualToggleCount % 16 === 0", payload)
+            self.assertIn(b"triggerEasterEgg();", payload)
+            self.assertIn(b'const dismissEasterEgg = () => {', payload)
+            self.assertIn(b'closeEasterEgg.addEventListener("click", dismissEasterEgg);', payload)
+            self.assertNotIn(b'document.addEventListener("click", dismissEasterEgg', payload)
+            self.assertNotIn(b"}, 4200);", payload)
+        self.assertIn(".lamp-easter-egg-active", APPROVED_SITE_STYLES)
+        self.assertIn("background-color: rgba(5, 12, 10, .92);", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes library-awakens-background", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes lamp-easter-egg-message", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes book-awakens", APPROVED_SITE_STYLES)
+
+    def test_atmosphere_overlays_reveal_more_background_detail(self) -> None:
+        self.assertIn("background: rgba(1, 6, 5, .43);", APPROVED_SITE_STYLES)
+        self.assertIn("background: rgba(1, 6, 5, .28);", APPROVED_SITE_STYLES)
+        self.assertIn(".app-navigation.lamp-is-off::after { opacity: .66; }", APPROVED_SITE_STYLES)
+
+    def test_mobile_crest_taps_trigger_repeatable_easter_egg(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            upload = page(app)
+            library = webapp_module.library_page(app)
+        for payload in (upload, library):
+            self.assertEqual(payload.count(b'class="mobile-crest-toggle"'), 1)
+            self.assertIn('aria-label="Разбудить библиотеку"'.encode(), payload)
+            self.assertIn(b"let mobileTapCount = 0;", payload)
+            self.assertIn(b"mobileTapCount >= 7", payload)
+            self.assertIn(b"window.setTimeout(resetMobileTaps, 3000);", payload)
+            self.assertIn(b'if (!window.matchMedia("(max-width: 640px)").matches) return;', payload)
+            self.assertNotIn(b'if (window.matchMedia("(max-width: 640px)").matches) {', payload)
+            self.assertIn(b"mobileEasterEggActive", payload)
+        self.assertIn(".mobile-easter-egg-active", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes mobile-book-awakens", APPROVED_SITE_STYLES)
+        self.assertIn("@keyframes mobile-easter-egg-message", APPROVED_SITE_STYLES)
+
 
 class WebAppTests(unittest.TestCase):
     def setUp(self) -> None:
