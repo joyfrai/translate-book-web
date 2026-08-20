@@ -24,6 +24,7 @@ from .translate_job import (
     run_translation,
 )
 from .security import UploadSecurityError, VirusTotalError, VirusTotalScanner, validate_payload
+from .book_metadata import filename_book_metadata, pipeline_book_metadata
 from .site_styles import SITE_STYLES as APPROVED_SITE_STYLES
 
 
@@ -52,6 +53,9 @@ def app_url(path: str = "/") -> str:
 
 def asset_url(path: str) -> str:
     return app_url(f"/assets/{path.lstrip('/')}")
+
+
+FAVICON_MARKUP = f'<link rel="icon" type="image/webp" href="{asset_url("atmosphere/translate-book-crest.webp")}">'
 
 
 def icon(name: str, class_name: str = "ui-icon") -> str:
@@ -118,7 +122,9 @@ class Store:
                     target_code TEXT NOT NULL DEFAULT 'ru',
                     target_language TEXT NOT NULL DEFAULT 'Русский',
                     source_code TEXT NOT NULL DEFAULT 'en',
-                    source_language TEXT NOT NULL DEFAULT 'English'
+                    source_language TEXT NOT NULL DEFAULT 'English',
+                    book_title TEXT NOT NULL DEFAULT '',
+                    book_author TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -131,6 +137,10 @@ class Store:
                 db.execute("ALTER TABLE jobs ADD COLUMN source_code TEXT NOT NULL DEFAULT 'en'")
             if "source_language" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN source_language TEXT NOT NULL DEFAULT 'English'")
+            if "book_title" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN book_title TEXT NOT NULL DEFAULT ''")
+            if "book_author" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN book_author TEXT NOT NULL DEFAULT ''")
             db.execute(
                 "UPDATE jobs SET status='queued', updated_at=? WHERE status='processing'",
                 (utc_now(),),
@@ -153,15 +163,16 @@ class Store:
         target_language: str = DEFAULT_TARGET_LANGUAGE,
     ) -> None:
         now = utc_now()
+        book_title, book_author = filename_book_metadata(original_name)
         with self.connect() as db:
             db.execute(
                 """
                 INSERT INTO jobs(
                     id, original_name, source_path, size_bytes, status,
                     created_at, updated_at, source_code, source_language,
-                    target_code, target_language
+                    target_code, target_language, book_title, book_author
                 )
-                VALUES(?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+                VALUES(?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -174,7 +185,16 @@ class Store:
                     source_language,
                     target_code,
                     target_language,
+                    book_title,
+                    book_author,
                 ),
+            )
+
+    def set_book_metadata(self, job_id: str, title: str, author: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE jobs SET book_title=?, book_author=?, updated_at=? WHERE id=?",
+                (title, author, utc_now(), job_id),
             )
 
     def progress(self, job: sqlite3.Row) -> tuple[int, int]:
@@ -260,6 +280,12 @@ class Worker(threading.Thread):
                     target_code=job["target_code"],
                     target_language=job["target_language"],
                 )
+                title, author = pipeline_book_metadata(
+                    self.store.jobs_dir / job["id"],
+                    Path(job["source_path"]),
+                    job["original_name"],
+                )
+                self.store.set_book_metadata(job["id"], title, author)
                 self.store.finish(job["id"], result_path)
             except Exception as exc:  # keep the durable queue alive
                 self.store.fail(job["id"], str(exc))
@@ -512,7 +538,14 @@ def site_header(active: str, library_count: int) -> str:
 
 
 def site_footer() -> str:
-    return "<footer class=\"site-footer\">Translate Book · Перевод книг</footer>"
+    return (
+        '<footer class="site-footer">'
+        'Develop by <a href="https://t.me/webbuildozer" target="_blank" rel="noopener noreferrer">'
+        'https://t.me/webbuildozer</a> · Based on '
+        '<a href="https://github.com/deusyu/translate-book" target="_blank" rel="noopener noreferrer">'
+        'https://github.com/deusyu/translate-book</a>'
+        '</footer>'
+    )
 
 
 def lamp_interaction_script() -> str:
@@ -655,7 +688,7 @@ def page(app: App, message: str = "") -> bytes:
     )
     library_count = len(app.store.list_finished())
     return f"""<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#07100e">
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#07100e">{FAVICON_MARKUP}
 <title>Translate Book — загрузить книгу</title>{APPROVED_SITE_STYLES}</head><body>
 <div class="library-app upload-app">{site_header("upload", library_count)}
 <div class="app-content"><main>
@@ -707,7 +740,11 @@ def library_page(app: App) -> bytes:
         cards = []
         for job in finished:
             original_name = job["original_name"]
-            title = html.escape(Path(original_name).stem or original_name)
+            fallback_title, fallback_author = filename_book_metadata(original_name)
+            book_title = job["book_title"] or fallback_title
+            book_author = job["book_author"] or fallback_author
+            title = html.escape(book_title)
+            author = html.escape(book_author)
             original_title = html.escape(original_name)
             job_id = html.escape(job["id"])
             source_language = html.escape(job["source_language"])
@@ -715,16 +752,16 @@ def library_page(app: App) -> bytes:
             theme_index = cover_theme_index(job["id"])
             created_at = format_display_time(job["created_at"])
             cards.append(
-                f"""<article class="catalog-book" data-title="{title.casefold()}">
-  <div class="book-cover cover-theme-{theme_index}" aria-hidden="true"><div class="book-cover-frame"><span class="book-cover-title">{title}</span><span class="book-cover-rule"></span><span class="book-cover-author">Перевод · {target_language}</span></div></div>
-  <div class="catalog-book-info"><h2 title="{original_title}">{title}</h2><p class="book-date">{created_at}</p><p class="book-language">{icon('arrows-left-right')}<span>{source_language} → {target_language}</span></p><div class="book-downloads"><a class="button" href="{app_url(f"/download/{job_id}/original")}">{icon('download-simple')}<span>Скачать оригинал · {source_language}</span></a><a class="button button-primary" href="{app_url(f"/download/{job_id}/translated")}">{icon('download-simple')}<span>Скачать перевод · {target_language}</span></a></div></div>
+                f"""<article class="catalog-book" data-title="{html.escape(f"{book_title} {book_author}".casefold(), quote=True)}">
+  <div class="book-cover cover-theme-{theme_index}" aria-hidden="true"><div class="book-cover-frame"><span class="book-cover-title">{title}</span><span class="book-cover-rule"></span><span class="book-cover-author">{author}</span></div></div>
+  <div class="catalog-book-info"><h2 title="{original_title}">{title}</h2><p class="book-author">{author}</p><p class="book-date">{created_at}</p><p class="book-language">{icon('arrows-left-right')}<span>{source_language} → {target_language}</span></p><div class="book-downloads"><a class="button" href="{app_url(f"/download/{job_id}/original")}">{icon('download-simple')}<span>Скачать оригинал · {source_language}</span></a><a class="button button-primary" href="{app_url(f"/download/{job_id}/translated")}">{icon('download-simple')}<span>Скачать перевод · {target_language}</span></a></div></div>
 </article>"""
             )
         books = "".join(cards)
     else:
         books = '<div class="empty-state catalog-empty"><strong>Переведённых книг пока нет.</strong><span>Готовые переводы появятся здесь.</span></div>'
     return f"""<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#07100e">
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#07100e">{FAVICON_MARKUP}
 <title>Библиотека — Translate Book</title>{APPROVED_SITE_STYLES}</head><body>
 <div class="library-app catalog-app">{site_header("library", len(finished))}
 <div class="app-content"><main>
@@ -788,8 +825,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return
         if path == "/favicon.ico":
-            self.send_response(HTTPStatus.NO_CONTENT)
-            self.end_headers()
+            favicon = STATIC_ROOT / "atmosphere" / "translate-book-crest.webp"
+            self.send_bytes(favicon.read_bytes(), "image/webp")
             return
         if path == "/library":
             self.send_bytes(library_page(self.server.app), "text/html; charset=utf-8")

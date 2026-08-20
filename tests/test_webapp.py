@@ -12,6 +12,7 @@ from pathlib import Path
 
 from webapp import app as webapp_module
 from webapp.app import App, Store, WebServer, page
+from webapp.book_metadata import filename_book_metadata, pipeline_book_metadata
 from webapp.security import UploadSecurityError
 from webapp.site_styles import SITE_STYLES as APPROVED_SITE_STYLES
 
@@ -50,6 +51,33 @@ class PresentationTests(unittest.TestCase):
             app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
             payload = page(app)
         self.assertNotIn("Проверка VirusTotal перед обработкой".encode(), payload)
+
+    def test_public_pages_use_logo_favicon_and_attribution_footer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            payloads = (page(app), webapp_module.library_page(app))
+        for payload in payloads:
+            self.assertIn(b'rel="icon" type="image/webp"', payload)
+            self.assertIn(b"translate-book-crest.webp", payload)
+            self.assertIn(b"https://t.me/webbuildozer", payload)
+            self.assertIn(b"https://github.com/deusyu/translate-book", payload)
+            self.assertNotIn("Translate Book · Перевод книг".encode(), payload)
+
+    def test_filename_and_pipeline_metadata_are_separate(self) -> None:
+        self.assertEqual(
+            filename_book_metadata("Steve_Magness_-_Do_Hard_Things.epub"),
+            ("Do Hard Things", "Steve Magness"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "Steve_Magness_-_Do_Hard_Things.epub"
+            config = root / "job" / "work" / f"{source.stem}_temp" / "config.txt"
+            config.parent.mkdir(parents=True)
+            config.write_text("original_title=Do Hard Things\ncreator=Steve Magness\n", encoding="utf-8")
+            self.assertEqual(
+                pipeline_book_metadata(root / "job", source, source.name),
+                ("Do Hard Things", "Steve Magness"),
+            )
 
     def test_done_job_uses_an_accessible_icon_instead_of_colored_text_badge(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -213,6 +241,11 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.getheader("Content-Type"), "image/webp")
         self.assertTrue(payload)
 
+        response, payload = self.request("GET", "/favicon.ico")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Type"), "image/webp")
+        self.assertTrue(payload)
+
         response, _ = self.request("GET", "/assets/../app.py")
         self.assertEqual(response.status, 404)
 
@@ -327,6 +360,23 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Скачать оригинал · English".encode(), payload)
         self.assertIn("Скачать перевод · Русский".encode(), payload)
 
+    def test_done_job_renders_separate_book_title_and_author(self) -> None:
+        job_id = uuid.uuid4().hex
+        job_dir = self.app.store.jobs_dir / job_id
+        job_dir.mkdir(parents=True)
+        result = job_dir / "translated-book.zip"
+        result.write_bytes(b"zip")
+        source = job_dir / "Steve_Magness_-_Do_Hard_Things.epub"
+        source.write_bytes(b"source")
+        self.app.store.add(job_id, source.name, source, 6)
+        self.app.store.finish(job_id, result)
+
+        response, payload = self.request("GET", "/library")
+        self.assertEqual(response.status, 200)
+        self.assertIn(b">Do Hard Things<", payload)
+        self.assertIn(b">Steve Magness<", payload)
+        self.assertNotIn(b">Steve_Magness_-_Do_Hard_Things<", payload)
+
     def test_done_job_uses_one_of_twenty_material_cover_themes(self) -> None:
         job_id = "0123456789abcdef0123456789abcdef"
         job_dir = self.app.store.jobs_dir / job_id
@@ -423,6 +473,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("target_language", columns)
         self.assertIn("source_code", columns)
         self.assertIn("source_language", columns)
+        self.assertIn("book_title", columns)
+        self.assertIn("book_author", columns)
 
 
 def valid_epub() -> bytes:
