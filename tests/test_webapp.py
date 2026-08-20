@@ -41,7 +41,7 @@ class PresentationTests(unittest.TestCase):
 
     def test_catalog_covers_are_centered_and_statuses_are_neutral(self) -> None:
         self.assertIn("margin-inline: auto;", APPROVED_SITE_STYLES)
-        self.assertIn(".catalog-book-info { padding-top: 18px; text-align: center; }", APPROVED_SITE_STYLES)
+        self.assertIn(".catalog-book-info { min-width: 0; padding-top: 18px; text-align: center; }", APPROVED_SITE_STYLES)
         self.assertIn(".book-language { justify-content: center;", APPROVED_SITE_STYLES)
         self.assertIn(".status-queued, .status-processing, .status-done", APPROVED_SITE_STYLES)
 
@@ -146,6 +146,13 @@ class PresentationTests(unittest.TestCase):
         self.assertIn(".mobile-easter-egg-active", APPROVED_SITE_STYLES)
         self.assertIn("@keyframes mobile-book-awakens", APPROVED_SITE_STYLES)
         self.assertIn("@keyframes mobile-easter-egg-message", APPROVED_SITE_STYLES)
+
+    def test_mobile_catalog_controls_can_shrink_without_horizontal_clipping(self) -> None:
+        self.assertIn(".app-navigation nav { position: relative; z-index: 1; display: grid; gap: 10px; min-width: 0; }", APPROVED_SITE_STYLES)
+        self.assertIn(".catalog-book-info { min-width: 0; padding-top: 18px; text-align: center; }", APPROVED_SITE_STYLES)
+        self.assertIn(".nav-link > span:not(.nav-count) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }", APPROVED_SITE_STYLES)
+        self.assertIn(".book-downloads .button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }", APPROVED_SITE_STYLES)
+        self.assertIn("overflow-wrap: anywhere;", APPROVED_SITE_STYLES)
 
 
 class WebAppTests(unittest.TestCase):
