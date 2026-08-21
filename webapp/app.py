@@ -705,7 +705,7 @@ def page(app: App, message: str = "") -> bytes:
   </section>
   <form class="upload-workspace" action="{app_url('/upload')}" method="post" enctype="multipart/form-data" aria-labelledby="upload-title">
     <span class="sr-only">Как работает перевод</span>
-    <div class="file-dropzone"><div class="field-label"><span id="upload-title">Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-picker" id="file-drop" for="book"><img class="file-visual" src="{asset_url('icons/file-arrow-up.svg')}" alt=""><strong id="file-name">Выбрать файл</strong><span id="file-meta">PDF, DOCX или EPUB</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл не выбран.</p></div>
+    <div class="file-dropzone"><div class="field-label"><span id="upload-title">Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-picker" id="file-drop" for="book"><img class="file-visual" src="{asset_url('icons/file-arrow-up.svg')}" alt=""><strong id="file-name">Выберите или перетащите файл</strong><span id="file-meta">PDF, DOCX или EPUB</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл не выбран.</p></div>
     <div class="translation-settings">
       <div class="language-grid"><div><label class="field-label" for="source_language"><span>Язык оригинала</span></label><div class="select-wrap"><select id="source_language" name="source_language">{source_options}</select></div></div><div><label class="field-label" for="target_language"><span>Язык перевода</span></label><div class="select-wrap"><select id="target_language" name="target_language">{language_options}</select></div></div></div>
       <div class="form-actions"><button class="button button-primary" type="submit">{icon('upload-simple')}<span>Начать перевод</span></button></div>
@@ -719,19 +719,76 @@ def page(app: App, message: str = "") -> bytes:
 <script>
   const bookInput = document.getElementById("book");
   if (bookInput) {{
-    bookInput.addEventListener("change", () => {{
-      const file = bookInput.files[0];
-      if (!file) return;
-      const fileDrop = document.getElementById("file-drop");
-      const fileName = document.getElementById("file-name");
-      const fileMeta = document.getElementById("file-meta");
-      const feedback = document.getElementById("file-feedback");
+    const fileDrop = document.getElementById("file-drop");
+    const fileName = document.getElementById("file-name");
+    const fileMeta = document.getElementById("file-meta");
+    const feedback = document.getElementById("file-feedback");
+    const allowedFile = /\\.(pdf|docx|epub)$/i;
+
+    const showFileError = (message) => {{
+      bookInput.value = "";
+      fileName.textContent = "Выберите или перетащите файл";
+      fileMeta.textContent = "PDF, DOCX или EPUB";
+      feedback.textContent = message;
+      feedback.classList.add("is-error");
+      fileDrop.classList.remove("has-file", "is-dragover");
+    }};
+
+    const renderFile = (file) => {{
+      if (!file) return false;
+      if (!allowedFile.test(file.name)) {{
+        showFileError("Этот формат не поддерживается. Нужен PDF, DOCX или EPUB.");
+        return false;
+      }}
       const sizeMb = file.size / (1024 * 1024);
       fileName.textContent = file.name;
       fileMeta.textContent = `${{sizeMb.toFixed(1)}} MB · файл выбран`;
       feedback.textContent = sizeMb <= 30 ? "Файл выбран и готов к загрузке." : "Файл больше лимита 30 МБ.";
       feedback.classList.toggle("is-error", sizeMb > 30);
       fileDrop.classList.add("has-file");
+      return true;
+    }};
+
+    const applyDroppedFile = (file) => {{
+      if (!renderFile(file)) return;
+      try {{
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        bookInput.files = transfer.files;
+      }} catch (error) {{
+        showFileError("Браузер не смог принять файл. Выберите его через проводник.");
+      }}
+    }};
+
+    bookInput.addEventListener("change", () => {{
+      renderFile(bookInput.files[0]);
+    }});
+
+    ["dragenter", "dragover"].forEach((eventName) => {{
+      fileDrop.addEventListener(eventName, (event) => {{
+        event.preventDefault();
+        event.stopPropagation();
+        fileDrop.classList.add("is-dragover");
+      }});
+    }});
+
+    ["dragleave", "dragend"].forEach((eventName) => {{
+      fileDrop.addEventListener(eventName, (event) => {{
+        event.preventDefault();
+        fileDrop.classList.remove("is-dragover");
+      }});
+    }});
+
+    fileDrop.addEventListener("drop", (event) => {{
+      event.preventDefault();
+      event.stopPropagation();
+      fileDrop.classList.remove("is-dragover");
+      const file = event.dataTransfer && event.dataTransfer.files[0];
+      if (file) {{
+        applyDroppedFile(file);
+      }} else {{
+        showFileError("Не удалось получить файл из перетаскивания.");
+      }}
     }});
   }}
 </script>

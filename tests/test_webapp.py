@@ -65,6 +65,20 @@ class PresentationTests(unittest.TestCase):
         self.assertLess(payload.index(b'class="page-header"'), payload.index(b'class="service-explainer"'))
         self.assertLess(payload.index(b'class="service-explainer"'), payload.index(b'class="upload-workspace"'))
 
+    def test_upload_page_supports_drag_and_drop_for_book_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            payload = page(app)
+        self.assertIn("Выберите или перетащите файл".encode(), payload)
+        self.assertIn(b'new DataTransfer()', payload)
+        self.assertIn(b'event.dataTransfer && event.dataTransfer.files[0]', payload)
+        self.assertIn(b'"dragover"', payload)
+        self.assertIn(b'"drop"', payload)
+        self.assertIn("Этот формат не поддерживается. Нужен PDF, DOCX или EPUB.".encode(), payload)
+
+    def test_upload_dropzone_has_drag_over_state(self) -> None:
+        self.assertIn(".file-picker.is-dragover", APPROVED_SITE_STYLES)
+
     def test_service_explainer_has_responsive_three_step_layout(self) -> None:
         self.assertIn(".service-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));", APPROVED_SITE_STYLES)
         self.assertIn(".service-step-icon", APPROVED_SITE_STYLES)
