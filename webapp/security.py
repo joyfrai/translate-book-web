@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import mimetypes
 import os
 import time
@@ -18,6 +19,11 @@ MAX_ARCHIVE_ENTRIES = 10_000
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 MAX_ARCHIVE_COMPRESSION_RATIO = 100.0
 VIRUSTOTAL_API = "https://www.virustotal.com/api/v3"
+LOGGER = logging.getLogger(__name__)
+
+
+def _log_filename(filename: str) -> str:
+    return Path(filename).name.replace("\n", "\\n").replace("\r", "\\r")
 
 
 class UploadSecurityError(ValueError):
@@ -119,27 +125,42 @@ class VirusTotalScanner:
         return body, f"multipart/form-data; boundary={boundary}"
 
     def scan(self, filename: str, payload: bytes) -> ScanVerdict:
+        safe_filename = _log_filename(filename)
+        LOGGER.info("virus_scan_started filename=%s size_bytes=%d", safe_filename, len(payload))
         body, content_type = self._multipart(filename, payload)
-        response = self._request(f"{self.api_base}/files", data=body, content_type=content_type)
+        try:
+            response = self._request(f"{self.api_base}/files", data=body, content_type=content_type)
+        except VirusTotalError:
+            LOGGER.exception("virus_scan_failed filename=%s stage=upload", safe_filename)
+            raise
         analysis_id = response.get("data", {}).get("id")
         if not analysis_id:
+            LOGGER.error("virus_scan_failed filename=%s stage=submit reason=missing_analysis_id", safe_filename)
             raise VirusTotalError("VirusTotal не вернул идентификатор анализа.")
+        LOGGER.info("virus_scan_submitted filename=%s analysis_id=%s", safe_filename, analysis_id)
         analysis_url = f"{self.api_base}/analyses/{urllib.parse.quote(analysis_id, safe='')}"
         last_status = "queued"
         for attempt in range(self.max_polls):
             if attempt:
                 time.sleep(self.poll_interval)
-            analysis = self._request(analysis_url)
+            try:
+                analysis = self._request(analysis_url)
+            except VirusTotalError:
+                LOGGER.exception("virus_scan_failed filename=%s analysis_id=%s stage=poll attempt=%d", safe_filename, analysis_id, attempt + 1)
+                raise
             attributes = analysis.get("data", {}).get("attributes", {})
             last_status = str(attributes.get("status", ""))
+            LOGGER.info("virus_scan_poll filename=%s analysis_id=%s attempt=%d status=%s", safe_filename, analysis_id, attempt + 1, last_status or "unknown")
             if last_status == "completed":
                 stats = attributes.get("stats", {})
                 if not isinstance(stats, dict) or "malicious" not in stats or "suspicious" not in stats:
+                    LOGGER.error("virus_scan_failed filename=%s analysis_id=%s stage=verdict reason=incomplete_verdict", safe_filename, analysis_id)
                     raise VirusTotalError("VirusTotal завершил анализ без полного verdict.")
                 try:
                     malicious = int(stats["malicious"])
                     suspicious = int(stats["suspicious"])
                 except (TypeError, ValueError) as exc:
+                    LOGGER.exception("virus_scan_failed filename=%s analysis_id=%s stage=verdict reason=invalid_verdict", safe_filename, analysis_id)
                     raise VirusTotalError("VirusTotal вернул некорректный verdict.") from exc
                 verdict = ScanVerdict(
                     analysis_id=analysis_id,
@@ -148,6 +169,9 @@ class VirusTotalScanner:
                     suspicious=suspicious,
                 )
                 if verdict.malicious or verdict.suspicious:
+                    LOGGER.warning("virus_scan_rejected filename=%s analysis_id=%s status=%s malicious=%d suspicious=%d", safe_filename, analysis_id, verdict.status, verdict.malicious, verdict.suspicious)
                     raise UploadSecurityError("VirusTotal обнаружил угрозу в файле.")
+                LOGGER.info("virus_scan_clean filename=%s analysis_id=%s status=%s malicious=%d suspicious=%d", safe_filename, analysis_id, verdict.status, verdict.malicious, verdict.suspicious)
                 return verdict
+        LOGGER.error("virus_scan_timed_out filename=%s analysis_id=%s status=%s attempts=%d", safe_filename, analysis_id, last_status or "unknown", self.max_polls)
         raise VirusTotalError(f"VirusTotal не завершил проверку вовремя (status={last_status}).")

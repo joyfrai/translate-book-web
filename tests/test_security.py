@@ -55,13 +55,21 @@ class SecurityTests(unittest.TestCase):
             FakeResponse({"data": {"attributes": {"status": "completed", "stats": {"malicious": 0, "suspicious": 0}}}}),
         ]
         scanner = VirusTotalScanner("secret", poll_interval=0, max_polls=2)
-        with patch("webapp.security.urllib.request.urlopen", side_effect=responses) as urlopen:
+        with patch("webapp.security.urllib.request.urlopen", side_effect=responses) as urlopen, self.assertLogs("webapp.security", level="INFO") as captured:
             verdict = scanner.scan("book.epub", epub_payload())
         self.assertEqual(verdict.analysis_id, "analysis-1")
         self.assertEqual(urlopen.call_count, 2)
         upload_request = urlopen.call_args_list[0].args[0]
         self.assertEqual(upload_request.get_header("X-apikey"), "secret")
         self.assertIn(b"filename=\"book.epub\"", upload_request.data)
+        logs = "\n".join(captured.output)
+        self.assertIn("virus_scan_started", logs)
+        self.assertIn("virus_scan_submitted", logs)
+        self.assertIn("virus_scan_poll", logs)
+        self.assertIn("virus_scan_clean", logs)
+        self.assertIn("malicious=0", logs)
+        self.assertIn("suspicious=0", logs)
+        self.assertNotIn("secret", logs)
 
     def test_virustotal_scanner_rejects_detection(self) -> None:
         responses = [
