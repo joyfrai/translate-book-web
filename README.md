@@ -144,6 +144,8 @@ The service uses a private runtime home and an explicit `CODEX_HOME`:
 - Copy `/root/.codex/auth.json` there with mode `0600` and ownership `translatebook:translatebook`; never commit this file or any token to Git.
 - `RestrictAddressFamilies` includes `AF_NETLINK` because Codex's Bubblewrap sandbox needs it to create its internal network namespace. Without it, chunks may retry with `bwrap: ... NETLINK_ROUTE` errors.
 - Keep VirusTotal credentials and other environment secrets in external `EnvironmentFile` paths.
+- The web worker processes one book at a time, translates its chunks with `MAX_TRANSLATORS=2`, and takes additional jobs from the SQLite queue in FIFO order.
+- The `Автоопределение` source-language option is currently prompt-only; there is no separate language detector. Select the source language explicitly for reliable results.
 
 Example setup:
 

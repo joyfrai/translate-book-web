@@ -144,6 +144,8 @@ Web 应用使用专用的 `translatebook` 系统用户运行。部署时请以�
 - 将 `/root/.codex/auth.json` 复制到该目录，权限设为 `0600`，所有者设为 `translatebook:translatebook`；不要把此文件或任何 token 提交到 Git。
 - `RestrictAddressFamilies` 包含 `AF_NETLINK`，因为 Codex 的 Bubblewrap sandbox 创建内部网络命名空间时需要它。缺少该设置时，chunk 可能出现 `bwrap: ... NETLINK_ROUTE` 并不断重试。
 - VirusTotal 凭据和其他环境变量中的 secret 必须继续放在外部 `EnvironmentFile` 中。
+- Web worker 一次只处理一本书，使用 `MAX_TRANSLATORS=2` 并行翻译该书的 chunk；其他任务按 FIFO 顺序留在 SQLite 队列中。
+- `Автоопределение` 原文语言选项目前只会作为 prompt 指令传递，并未运行独立的语言检测器。为了可靠结果，请手动选择原文语言。
 
 示例配置：
 

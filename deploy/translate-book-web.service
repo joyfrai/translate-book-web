@@ -5,17 +5,34 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=translatebook
+Group=translatebook
 WorkingDirectory=/root/projects/translate-book-web
-Environment=HOME=/root
+Environment=HOME=/var/lib/translate-book-web
+Environment=CODEX_HOME=/var/lib/translate-book-web/.codex
 Environment=PATH=/root/projects/translate-book-web/.venv:/root/.nvm/versions/node/v25.9.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=TRANSLATE_BOOK_HOST=127.0.0.1
+Environment=TRANSLATE_BOOK_BASE_PATH=/translatebook
 EnvironmentFile=/root/projects/translate-book-web/.env
 EnvironmentFile=/root/joy-core/security/secrets/.env.virustotal
 ExecStart=/root/projects/translate-book-web/.venv/bin/python -m webapp.run
 Restart=always
 RestartSec=5
+ReadWritePaths=/root/projects/translate-book-web/data /var/lib/translate-book-web
+ProtectSystem=strict
+ProtectHome=read-only
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectClock=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
