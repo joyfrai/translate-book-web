@@ -52,6 +52,25 @@ class PresentationTests(unittest.TestCase):
             payload = page(app)
         self.assertNotIn("Проверка VirusTotal перед обработкой".encode(), payload)
 
+    def test_upload_page_explains_the_service_before_the_form(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            payload = page(app)
+        self.assertIn('class="service-explainer"'.encode(), payload)
+        self.assertIn("Как это работает".encode(), payload)
+        self.assertIn("Загрузите книгу".encode(), payload)
+        self.assertIn("Выберите языки".encode(), payload)
+        self.assertIn("Скачайте результат".encode(), payload)
+        self.assertIn("публичной библиотеке".encode(), payload)
+        self.assertLess(payload.index(b'class="page-header"'), payload.index(b'class="service-explainer"'))
+        self.assertLess(payload.index(b'class="service-explainer"'), payload.index(b'class="upload-workspace"'))
+
+    def test_service_explainer_has_responsive_three_step_layout(self) -> None:
+        self.assertIn(".service-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));", APPROVED_SITE_STYLES)
+        self.assertIn(".service-step-icon", APPROVED_SITE_STYLES)
+        self.assertIn(".service-note", APPROVED_SITE_STYLES)
+        self.assertIn(".service-steps { grid-template-columns: 1fr;", APPROVED_SITE_STYLES)
+
     def test_public_pages_use_logo_favicon_and_attribution_footer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")

@@ -1,26 +1,29 @@
 # Design QA
 
-Дата проверки: 20 августа 2026
+Дата проверки: 21 августа 2026
 
 - Source visual truth: `/Users/apple/.codex/generated_images/01a01ab0-755f-7b23-bd9a-86f7c6c7f1e5/exec-d77f3b18-5b1e-4254-96dc-c591d464b87f.png`
-- Implementation: `http://127.0.0.1:3100/library`
-- Implementation screenshot: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/library-lamp-on-final.png`
-- Full-view comparison: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/final-reference-comparison-lamp.png`
+- Implementation: `http://127.0.0.1:3100/`
+- Implementation screenshot: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/upload-explainer-before-form-desktop.jpg`
+- Full-view comparison: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/reference-upload-explainer-comparison.jpg`
 - Lamp-off evidence: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/library-lamp-off-final.png`
 - Fixed-atmosphere scroll evidence: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/library-fixed-atmosphere-scroll.png`
 - Focused upload evidence: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/upload-scroll-status.png`
-- Mobile evidence: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/library-mobile-final.png`
+- Mobile evidence: `/Users/apple/Documents/Codex/2026-08-19/product-design-plugin-product-design-openai-2/outputs/qa/upload-explainer-before-form-mobile.jpg`
 
 ## Viewport and normalization
 
 - Desktop CSS viewport: 1487 × 1058 px; browser capture: 1487 × 886 px at the selected in-app browser density.
 - Source pixels: 1487 × 1058. For the combined comparison, the source was cropped to the same 1487 × 886 visible region; no scaling was applied.
-- Mobile CSS viewport: 394 × 845 px; no horizontal overflow (`body.scrollWidth = 394`).
+- Implementation pixels: 1487 × 886 at a 1487 × 1056 CSS viewport reported by the in-app browser.
+- Mobile pixels and CSS viewport: 390 × 845 px; no horizontal overflow (`document.scrollWidth = 390`).
 - State: six completed translations in the catalog; six completed jobs plus one processing job on the upload page.
 
 ## Findings
 
 - No actionable P0, P1, or P2 differences remain.
+- The new «Как это работает» block intentionally sits before the upload form: the explanatory context is read before the action, while the complete desktop form still remains within the first viewport (`form bottom = 788px` in a 1056px CSS viewport).
+- The source reference depicts the library rather than the upload flow, so the comparison checks the approved visual language (editorial typography, brass rules, dark textured surfaces, icon treatment, and atmosphere) rather than identical screen structure.
 - The catalog intentionally uses a direct three-column library grid instead of the reference's featured-book block. This is the approved separation between the upload/progress page and the finished-book catalog, not accidental drift.
 - The mock contains author metadata that the current backend does not provide. The implementation therefore uses only real filename-derived titles, languages, dates, and downloads; no author names were invented.
 
@@ -31,10 +34,12 @@
 - Colors and tokens: dark green-black surfaces, brass rules, gold active navigation, and oxblood primary actions match the reference direction. Statuses use neutral outlined circles with gold icons instead of green/yellow badges.
 - Image quality and assets: supplied/generated library imagery is darkened behind content; cover textures, spines, inset highlights, and shadows remain crisp. Official Phosphor SVG icons are used.
 - Copy and content: upload and catalog copy is concise; internal VirusTotal wording is absent; timestamps omit seconds and timezone; catalog exposes separate original/translation downloads.
+- Service explanation: three factual steps describe supported input formats, language selection, and result download. The public-library note is explicit and appears before file selection.
 
 ## Interaction and responsive checks
 
 - Search filters the visible catalog.
+- Browser verification filtered six cards down to the single «Atomic Habits» result; the source-language selector changed to `de` and remained enabled.
 - Source and target language selectors remain enabled on mobile and desktop.
 - Status icons expose accessible labels; processing uses a rotating indicator and completed jobs use a check.
 - All desktop progress bars have identical left/right coordinates whether or not a download button is present.
@@ -62,10 +67,11 @@
 6. Follow-up P2: the atmosphere image was capped at `1180px`, exposing a rectangular image edge on wide screens. Fixed by sizing the fixed layer with `cover`; browser evidence reports an app width equal to the viewport width and no horizontal overflow.
 7. Easter-egg iteration: the approved desktop scene reuses only existing assets. At the 16th and 32nd manual triggers the background zoom, crest pulse, cover wave, and attributed quote card all became active. The card persisted through an outside click and closed only through its own button.
 8. Mobile easter-egg iteration: seven rapid taps on the existing crest trigger a bottom-sheet adaptation of the same quote. Browser evidence confirms the 6/7 threshold, three-second reset, repeatability, close-only behavior, upload-page fallback without covers, 44 px target, and desktop isolation.
+9. Service-explainer iteration: the first implementation placed the block after the form. Following product review it was moved between the page header and upload form. Post-fix evidence shows the complete desktop form above the fold, a three-column desktop explanation, a one-column mobile explanation, and zero horizontal overflow at 390px.
 
 ## Verification
 
-- `python3 -m unittest discover -s tests -v` — 259 tests passed.
+- `python3 -m unittest discover -s tests -p 'test_*.py' -v` — 265 tests passed.
 - Browser timing evidence: at 900 ms the lamp is on; at 1350 ms `lamp-flicker-off` is active; at 1950 ms the lamp is off with `aria-pressed=false`. Checks also covered both manual lamp states, fixed full-width atmosphere sizing, desktop upload/progress, and 394 px mobile layouts. Browser console: no errors.
 
 final result: passed

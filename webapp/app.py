@@ -692,8 +692,17 @@ def page(app: App, message: str = "") -> bytes:
 <title>Translate Book — загрузить книгу</title>{APPROVED_SITE_STYLES}</head><body>
 <div class="library-app upload-app">{site_header("upload", library_count)}
 <div class="app-content"><main>
-  <header class="page-header"><div><h1>Загрузить книгу</h1><p>PDF, DOCX или EPUB, до 30 MB</p></div><a class="quiet-link" href="{app_url('/library')}">{icon('book-open')}<span>Открыть библиотеку</span></a></header>
+  <header class="page-header"><div><h1>Загрузить книгу</h1><p>Загрузите файл, выберите языки и получите готовый перевод.</p></div><a class="quiet-link" href="{app_url('/library')}">{icon('book-open')}<span>Открыть библиотеку</span></a></header>
   {notice}
+  <section class="service-explainer" aria-labelledby="service-title">
+    <div class="service-explainer-heading"><h2 id="service-title">Как это работает</h2><p>От файла до готового перевода — три шага.</p></div>
+    <div class="service-steps">
+      <article class="service-step"><span class="service-step-icon">{icon('file-arrow-up')}</span><div><h3>Загрузите книгу</h3><p>PDF, DOCX или EPUB размером до 30 MB.</p></div></article>
+      <article class="service-step"><span class="service-step-icon">{icon('arrows-left-right')}</span><div><h3>Выберите языки</h3><p>Укажите язык оригинала и язык перевода.</p></div></article>
+      <article class="service-step"><span class="service-step-icon">{icon('download-simple')}</span><div><h3>Скачайте результат</h3><p>После обработки загрузите архив с готовыми файлами.</p></div></article>
+    </div>
+    <p class="service-note">Завершённые переводы появляются в публичной библиотеке вместе с оригиналом.</p>
+  </section>
   <form class="upload-workspace" action="{app_url('/upload')}" method="post" enctype="multipart/form-data" aria-labelledby="upload-title">
     <span class="sr-only">Как работает перевод</span>
     <div class="file-dropzone"><div class="field-label"><span id="upload-title">Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-picker" id="file-drop" for="book"><img class="file-visual" src="{asset_url('icons/file-arrow-up.svg')}" alt=""><strong id="file-name">Выбрать файл</strong><span id="file-meta">PDF, DOCX или EPUB</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл не выбран.</p></div>
