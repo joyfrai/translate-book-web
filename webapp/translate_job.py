@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import re
 import subprocess
 import sys
@@ -24,6 +25,43 @@ DEFAULT_SOURCE_LANGUAGE = SUPPORTED_LANGUAGES[DEFAULT_SOURCE_CODE]
 DEFAULT_TARGET_CODE = "ru"
 DEFAULT_TARGET_LANGUAGE = SUPPORTED_LANGUAGES[DEFAULT_TARGET_CODE]
 MAX_TRANSLATORS = 8
+CODEX_REQUEST_RE = re.compile(r"(?m)^\$ codex exec(?:\s|$)")
+
+
+def collect_translation_usage(job_dir: Path) -> tuple[int, int]:
+    """Read measured Codex request/token usage from JSONL chunk logs."""
+    requests = 0
+    tokens = 0
+    for log_path in job_dir.glob("chunk*.log"):
+        text = log_path.read_text(encoding="utf-8", errors="ignore")
+        requests += len(CODEX_REQUEST_RE.findall(text))
+        turn_usage = []
+        response_usage = []
+        for line in text.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            usage = event.get("usage")
+            if not isinstance(usage, dict):
+                response = event.get("response")
+                usage = response.get("usage") if isinstance(response, dict) else None
+            if not isinstance(usage, dict):
+                continue
+            if event.get("type") == "turn.completed":
+                turn_usage.append(usage)
+            elif event.get("type") == "response.completed":
+                response_usage.append(usage)
+        for usage in turn_usage or response_usage:
+            total = usage.get("total_tokens")
+            if isinstance(total, int):
+                tokens += total
+                continue
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+            if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+                tokens += input_tokens + output_tokens
+    return requests, tokens
 
 
 def run_logged(command: list[str], cwd: Path, log_path: Path, timeout: int | None = None) -> None:
@@ -58,6 +96,7 @@ Rules: preserve Markdown structure, links, images, code and paragraph order; tra
         "--ephemeral",
         "--color",
         "never",
+        "--json",
         prompt,
     ]
     run_logged(command, repo_root, log_path, timeout=1800)

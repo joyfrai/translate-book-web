@@ -429,6 +429,8 @@ select { width: 100%; min-height: 54px; appearance: none; padding: 0 40px 0 15px
 select:hover { border-color: var(--brass); }
 .form-actions { display: grid; gap: 14px; }
 .form-actions .button { min-height: 62px; font-family: var(--font-display); font-size: 20px; }
+.button:disabled, .button:disabled:hover { cursor: wait; opacity: .78; transform: none; }
+.button-progress-icon { animation: status-spin 1.4s linear infinite; }
 .notice { margin-bottom: 22px; padding: 13px 15px; border: 1px solid #735c37; color: var(--warning); background: rgba(61, 42, 18, .58); }
 .service-explainer {
   margin-top: 34px;
@@ -480,10 +482,12 @@ select:hover { border-color: var(--brass); }
 .status-processing img { animation: status-spin 1.4s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 .job-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; color: var(--ink-muted); font-size: 11px; }
+.job-usage { color: var(--brass-bright); }
 .progress-wrap { display: grid; grid-template-columns: minmax(140px, 1fr) auto; align-items: center; gap: 10px; }
 .progress-track { height: 6px; overflow: hidden; background: #29271f; }
 .progress-track span { display: block; width: var(--progress); height: 100%; background-color: var(--brass); background-image: var(--texture-leather); background-size: 280px 280px; background-blend-mode: soft-light; box-shadow: 0 0 12px rgba(215, 155, 78, .22); }
 .progress-label { color: var(--ink-soft); font-size: 11px; white-space: nowrap; }
+.progress-note { grid-column: 1 / -1; color: var(--ink-muted); font-size: 10px; }
 .job-actions { display: flex; align-items: center; }
 .job-actions .button { min-height: 42px; font-size: 12px; }
 .error { grid-column: 1 / -1; color: var(--danger); font-size: 12px; white-space: pre-wrap; }

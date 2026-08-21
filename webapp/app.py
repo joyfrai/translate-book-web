@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 import shutil
 import sqlite3
@@ -21,6 +22,7 @@ from .translate_job import (
     DEFAULT_TARGET_LANGUAGE,
     SOURCE_LANGUAGES,
     SUPPORTED_LANGUAGES,
+    collect_translation_usage,
     run_translation,
 )
 from .security import UploadSecurityError, VirusTotalError, VirusTotalScanner, validate_payload
@@ -43,6 +45,24 @@ STATUS_LABELS = {
     "done": "Готово",
     "failed": "Ошибка",
 }
+LOGGER = logging.getLogger(__name__)
+RUSSIAN_LANGUAGE_NAMES = {
+    "ru": "Русский",
+    "en": "Английский",
+    "zh": "Китайский",
+    "ja": "Японский",
+    "ko": "Корейский",
+    "fr": "Французский",
+    "de": "Немецкий",
+    "es": "Испанский",
+}
+
+
+def language_select_label(code: str, name: str) -> str:
+    russian_name = RUSSIAN_LANGUAGE_NAMES.get(code)
+    if not russian_name or russian_name.casefold() == name.casefold():
+        return name
+    return f"{name} ({russian_name})"
 
 
 def app_url(path: str = "/") -> str:
@@ -124,7 +144,9 @@ class Store:
                     source_code TEXT NOT NULL DEFAULT 'en',
                     source_language TEXT NOT NULL DEFAULT 'English',
                     book_title TEXT NOT NULL DEFAULT '',
-                    book_author TEXT NOT NULL DEFAULT ''
+                    book_author TEXT NOT NULL DEFAULT '',
+                    translation_requests INTEGER,
+                    translation_tokens INTEGER
                 )
                 """
             )
@@ -141,6 +163,10 @@ class Store:
                 db.execute("ALTER TABLE jobs ADD COLUMN book_title TEXT NOT NULL DEFAULT ''")
             if "book_author" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN book_author TEXT NOT NULL DEFAULT ''")
+            if "translation_requests" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN translation_requests INTEGER")
+            if "translation_tokens" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN translation_tokens INTEGER")
             db.execute(
                 "UPDATE jobs SET status='queued', updated_at=? WHERE status='processing'",
                 (utc_now(),),
@@ -195,6 +221,13 @@ class Store:
             db.execute(
                 "UPDATE jobs SET book_title=?, book_author=?, updated_at=? WHERE id=?",
                 (title, author, utc_now(), job_id),
+            )
+
+    def set_translation_usage(self, job_id: str, requests: int, tokens: int) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE jobs SET translation_requests=?, translation_tokens=?, updated_at=? WHERE id=?",
+                (requests, tokens, utc_now(), job_id),
             )
 
     def progress(self, job: sqlite3.Row) -> tuple[int, int]:
@@ -289,6 +322,12 @@ class Worker(threading.Thread):
                 self.store.finish(job["id"], result_path)
             except Exception as exc:  # keep the durable queue alive
                 self.store.fail(job["id"], str(exc))
+            finally:
+                try:
+                    requests, tokens = collect_translation_usage(self.store.jobs_dir / job["id"])
+                    self.store.set_translation_usage(job["id"], requests, tokens)
+                except Exception:
+                    LOGGER.warning("Could not persist translation usage for job %s", job["id"], exc_info=True)
 
 
 class App:
@@ -646,9 +685,12 @@ def lamp_interaction_script() -> str:
 def job_markup(app: App, job: sqlite3.Row) -> str:
     status = job["status"]
     completed, total = app.store.progress(job)
+    progress_note = ""
     if total:
         progress_label = f"{completed / total * 100:.1f}% ({completed}/{total})"
         progress_value = min(completed / total * 100, 100)
+        if status == "processing" and completed >= total:
+            progress_note = '<span class="progress-note">Подготовка файлов…</span>'
     elif status == "done":
         progress_label, progress_value = "100%", 100
     elif status == "queued":
@@ -659,6 +701,10 @@ def job_markup(app: App, job: sqlite3.Row) -> str:
     if status == "done" and job["result_path"] and Path(job["result_path"]).is_file():
         result = f'<a class="button" href="{app_url(f"/download/{job["id"]}")}">{icon("download-simple")}<span>Скачать ZIP</span></a>'
     error = f'<div class="error">{html.escape(job["error"])}</div>' if job["error"] else ""
+    usage = ""
+    if job["translation_tokens"]:
+        token_count = f'{job["translation_tokens"]:,}'.replace(",", " ")
+        usage = f'<span class="job-usage" title="Фактический usage по логам Codex">{token_count} токенов · {job["translation_requests"]} запросов</span>'
     status_label = html.escape(STATUS_LABELS.get(status, status))
     status_icon = {
         "queued": "clock-countdown",
@@ -667,8 +713,8 @@ def job_markup(app: App, job: sqlite3.Row) -> str:
         "failed": "warning-circle",
     }.get(status, "warning-circle")
     return f"""<li class="job">
-  <div class="job-main"><div class="job-title"><strong title="{html.escape(job["original_name"])}">{html.escape(job["original_name"])}</strong><span class="status status-{html.escape(status)}" role="img" aria-label="{status_label}" title="{status_label}">{icon(status_icon, 'status-icon')}</span></div><div class="job-meta"><span>{job["size_bytes"] / 1024 / 1024:.1f} МБ</span><span>{html.escape(job["source_language"])} → {html.escape(job["target_language"])}</span><span>{format_display_time(job["created_at"])}</span></div></div>
-  <div class="progress-wrap"><div class="progress-track" role="progressbar" aria-label="Прогресс перевода" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{progress_value:.0f}"><span style="--progress: {progress_value:.1f}%"></span></div><span class="progress-label">{progress_label}</span></div>
+  <div class="job-main"><div class="job-title"><strong title="{html.escape(job["original_name"])}">{html.escape(job["original_name"])}</strong><span class="status status-{html.escape(status)}" role="img" aria-label="{status_label}" title="{status_label}">{icon(status_icon, 'status-icon')}</span></div><div class="job-meta"><span>{job["size_bytes"] / 1024 / 1024:.1f} МБ</span><span>{html.escape(job["source_language"])} → {html.escape(job["target_language"])}</span><span>{format_display_time(job["created_at"])}</span>{usage}</div></div>
+  <div class="progress-wrap"><div class="progress-track" role="progressbar" aria-label="Прогресс перевода" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{progress_value:.0f}"><span style="--progress: {progress_value:.1f}%"></span></div><span class="progress-label">{progress_label}</span>{progress_note}</div>
   <div class="job-actions">{result}</div>
   {error}
 </li>"""
@@ -679,11 +725,11 @@ def page(app: App, message: str = "") -> bytes:
     jobs = f'<ul class="job-list">{job_rows}</ul>' if job_rows else '<div class="empty-state"><strong>Файлов пока нет.</strong><span>После выбора книги задача появится здесь.</span></div>'
     notice = f'<div class="notice" role="status">{html.escape(message)}</div>' if message else ""
     source_options = "".join(
-        f'<option value="{code}"{" selected" if code == DEFAULT_SOURCE_CODE else ""}>{html.escape(name)}</option>'
+        f'<option value="{code}"{" selected" if code == DEFAULT_SOURCE_CODE else ""}>{html.escape(language_select_label(code, name))}</option>'
         for code, name in SOURCE_LANGUAGES.items()
     )
     language_options = "".join(
-        f'<option value="{code}"{" selected" if code == DEFAULT_TARGET_CODE else ""}>{html.escape(name)}</option>'
+        f'<option value="{code}"{" selected" if code == DEFAULT_TARGET_CODE else ""}>{html.escape(language_select_label(code, name))}</option>'
         for code, name in SUPPORTED_LANGUAGES.items()
     )
     library_count = len(app.store.list_finished())
@@ -708,11 +754,11 @@ def page(app: App, message: str = "") -> bytes:
     <div class="file-dropzone"><div class="field-label"><span id="upload-title">Файл книги</span><span class="field-hint">до 30 MB</span></div><input class="file-input" id="book" name="book" type="file" accept=".pdf,.docx,.epub" aria-describedby="file-feedback" required><label class="file-picker" id="file-drop" for="book"><img class="file-visual" src="{asset_url('icons/file-arrow-up.svg')}" alt=""><strong id="file-name">Выберите или перетащите файл</strong><span id="file-meta">PDF, DOCX или EPUB</span></label><p class="file-feedback" id="file-feedback" role="status" aria-live="polite">Файл не выбран.</p></div>
     <div class="translation-settings">
       <div class="language-grid"><div><label class="field-label" for="source_language"><span>Язык оригинала</span></label><div class="select-wrap"><select id="source_language" name="source_language">{source_options}</select></div></div><div><label class="field-label" for="target_language"><span>Язык перевода</span></label><div class="select-wrap"><select id="target_language" name="target_language">{language_options}</select></div></div></div>
-      <div class="form-actions"><button class="button button-primary" type="submit">{icon('upload-simple')}<span>Начать перевод</span></button></div>
+      <div class="form-actions"><button class="button button-primary" id="upload-submit" type="submit">{icon('upload-simple')}<span id="upload-submit-label">Начать перевод</span></button></div>
     </div>
   </form>
-  <section class="tasks-section" aria-labelledby="jobs-title">
-    <div class="section-heading"><div><h2 id="jobs-title">Текущие загрузки</h2></div><a class="refresh-link" href="{app_url('/')}">{icon('arrow-clockwise')}<span>Обновить</span></a></div>
+  <section class="tasks-section" id="jobs" aria-labelledby="jobs-title">
+    <div class="section-heading"><div><h2 id="jobs-title">Текущие загрузки</h2></div><a class="refresh-link" href="{app_url('/#jobs')}">{icon('arrow-clockwise')}<span>Обновить</span></a></div>
     {jobs}
   </section>
 </main>{site_footer()}</div></div>
@@ -788,6 +834,29 @@ def page(app: App, message: str = "") -> bytes:
         applyDroppedFile(file);
       }} else {{
         showFileError("Не удалось получить файл из перетаскивания.");
+      }}
+    }});
+  }}
+
+  const uploadForm = document.querySelector(".upload-workspace");
+  const uploadSubmit = document.getElementById("upload-submit");
+  if (uploadForm && uploadSubmit) {{
+    uploadForm.addEventListener("submit", (event) => {{
+      if (uploadSubmit.disabled) {{
+        event.preventDefault();
+        return;
+      }}
+      uploadSubmit.disabled = true;
+      uploadSubmit.setAttribute("aria-busy", "true");
+      uploadSubmit.setAttribute("aria-label", "Книга загружается");
+      const submitIcon = uploadSubmit.querySelector(".ui-icon");
+      const submitLabel = document.getElementById("upload-submit-label");
+      if (submitIcon) {{
+        submitIcon.src = "{asset_url('icons/spinner-gap.svg')}";
+        submitIcon.classList.add("button-progress-icon");
+      }}
+      if (submitLabel) {{
+        submitLabel.textContent = "Книга загружается…";
       }}
     }});
   }}

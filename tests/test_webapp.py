@@ -15,6 +15,7 @@ from webapp.app import App, Store, WebServer, page
 from webapp.book_metadata import filename_book_metadata, pipeline_book_metadata
 from webapp.security import UploadSecurityError
 from webapp.site_styles import SITE_STYLES as APPROVED_SITE_STYLES
+from webapp.translate_job import collect_translation_usage
 
 
 class AcceptScanner:
@@ -79,6 +80,18 @@ class PresentationTests(unittest.TestCase):
     def test_upload_dropzone_has_drag_over_state(self) -> None:
         self.assertIn(".file-picker.is-dragover", APPROVED_SITE_STYLES)
 
+    def test_upload_submit_shows_loading_state_and_prevents_repeat_submit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = App(Path(__file__).resolve().parents[1], Path(temp_dir) / "data")
+            payload = page(app)
+        self.assertIn(b'id="upload-submit"', payload)
+        self.assertIn("Книга загружается".encode(), payload)
+        self.assertIn(b'aria-busy', payload)
+        self.assertIn(b'uploadSubmit.disabled = true', payload)
+        self.assertIn(b'spinner-gap.svg', payload)
+        self.assertIn(".button-progress-icon", APPROVED_SITE_STYLES)
+        self.assertIn(".button:disabled", APPROVED_SITE_STYLES)
+
     def test_service_explainer_has_responsive_three_step_layout(self) -> None:
         self.assertIn(".service-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));", APPROVED_SITE_STYLES)
         self.assertIn(".service-step-icon", APPROVED_SITE_STYLES)
@@ -127,9 +140,42 @@ class PresentationTests(unittest.TestCase):
         self.assertIn("check-circle.svg", markup)
         self.assertNotIn(">Готово<", markup)
 
+    def test_job_markup_shows_measured_translation_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app = App(Path(__file__).resolve().parents[1], root / "data")
+            source = root / "book.epub"
+            source.write_bytes(b"source")
+            app.store.add("book", source.name, source, len(b"source"))
+            empty_markup = webapp_module.job_markup(app, app.store.get("book"))
+            self.assertNotIn("токенов", empty_markup)
+            app.store.set_translation_usage("book", 6, 299250)
+            markup = webapp_module.job_markup(app, app.store.get("book"))
+        self.assertIn("299 250 токенов · 6 запросов", markup)
+        self.assertIn("job-usage", markup)
+
+    def test_processing_job_explains_final_file_preparation_after_full_chunk_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app = App(Path(__file__).resolve().parents[1], root / "data")
+            source = root / "book.epub"
+            source.write_bytes(b"source")
+            app.store.add("book", source.name, source, len(b"source"))
+            app.store.claim()
+            temp_book_dir = app.store.jobs_dir / "book" / "work" / "book_temp"
+            temp_book_dir.mkdir(parents=True)
+            (temp_book_dir / "chunk0001.md").write_text("source", encoding="utf-8")
+            (temp_book_dir / "output_chunk0001.md").write_text("translation", encoding="utf-8")
+            markup = webapp_module.job_markup(app, app.store.get("book"))
+        self.assertIn("100.0% (1/1)", markup)
+        self.assertIn("Подготовка файлов…", markup)
+        self.assertIn("progress-note", markup)
+
     def test_job_progress_alignment_and_status_icon_contrast_are_stable(self) -> None:
         self.assertIn("minmax(190px, 220px)", APPROVED_SITE_STYLES)
         self.assertIn(".status img { width: 15px; height: 15px; filter:", APPROVED_SITE_STYLES)
+        self.assertIn(".progress-note", APPROVED_SITE_STYLES)
+        self.assertIn(".job-usage", APPROVED_SITE_STYLES)
 
     def test_lamp_toggle_is_accessible_on_both_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -250,9 +296,11 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("Файлов пока нет".encode(), payload)
         self.assertIn("name=\"source_language\"".encode(), payload)
-        self.assertIn("<option value=\"en\" selected>English</option>".encode(), payload)
+        self.assertIn("<option value=\"en\" selected>English (Английский)</option>".encode(), payload)
         self.assertIn("name=\"target_language\"".encode(), payload)
         self.assertIn("<option value=\"ru\" selected>Русский</option>".encode(), payload)
+        self.assertIn("<option value=\"zh\">中文 (Китайский)</option>".encode(), payload)
+        self.assertIn("<option value=\"de\">Deutsch (Немецкий)</option>".encode(), payload)
         self.assertIn("до 30 MB".encode(), payload)
         self.assertIn("Как работает перевод".encode(), payload)
         self.assertIn("id=\"file-feedback\"".encode(), payload)
@@ -267,6 +315,8 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("Последние задачи".encode(), payload)
         self.assertIn(b'name="source_language"', payload)
         self.assertIn(b'name="target_language"', payload)
+        self.assertIn(b'id="jobs"', payload)
+        self.assertIn(b'href="/#jobs"', payload)
 
     def test_static_design_asset_is_served_and_traversal_is_rejected(self) -> None:
         response, payload = self.request("GET", "/assets/atmosphere/translate-book-crest.webp")
@@ -508,6 +558,34 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("source_language", columns)
         self.assertIn("book_title", columns)
         self.assertIn("book_author", columns)
+        self.assertIn("translation_requests", columns)
+        self.assertIn("translation_tokens", columns)
+
+    def test_collect_translation_usage_reads_requests_and_tokens_from_chunk_logs(self) -> None:
+        job_dir = Path(self.temp_dir.name) / "usage-job"
+        job_dir.mkdir()
+        (job_dir / "chunk0001.log").write_text(
+            '$ codex exec --json\n{"type":"turn.completed","usage":{"total_tokens":25254}}\n',
+            encoding="utf-8",
+        )
+        (job_dir / "chunk0002.log").write_text(
+            '$ codex exec --json\n{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":22352}}\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(collect_translation_usage(job_dir), (2, 147606))
+
+    def test_usage_is_not_backfilled_from_existing_plain_text_logs(self) -> None:
+        data_dir = Path(self.temp_dir.name) / "no-backfill-data"
+        store = Store(data_dir)
+        job_dir = store.jobs_dir / "book"
+        job_dir.mkdir(parents=True)
+        source = job_dir / "source.epub"
+        source.write_bytes(b"source")
+        store.add("book", source.name, source, len(b"source"))
+        (job_dir / "chunk0001.log").write_text("tokens used\n25,254\n", encoding="utf-8")
+        restarted = Store(data_dir)
+        row = restarted.get("book")
+        self.assertIsNone(row["translation_tokens"])
 
 
 def valid_epub() -> bytes:
