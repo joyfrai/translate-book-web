@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import io
+import json
 import sqlite3
 import tempfile
 import threading
@@ -9,13 +10,14 @@ import unittest
 import uuid
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from webapp import app as webapp_module
 from webapp.app import App, Store, WebServer, page
 from webapp.book_metadata import filename_book_metadata, pipeline_book_metadata
 from webapp.security import UploadSecurityError
 from webapp.site_styles import SITE_STYLES as APPROVED_SITE_STYLES
-from webapp.translate_job import collect_translation_usage
+from webapp.translate_job import MAX_TRANSLATORS, collect_translation_usage, run_translation
 
 
 class AcceptScanner:
@@ -88,9 +90,13 @@ class PresentationTests(unittest.TestCase):
         self.assertIn("Книга загружается".encode(), payload)
         self.assertIn(b'aria-busy', payload)
         self.assertIn(b'uploadSubmit.disabled = true', payload)
+        self.assertIn(b'bookInput.disabled = true', payload)
+        self.assertIn(b'uploadLocked = true', payload)
+        self.assertIn(b'fileDrop.classList.add("is-disabled")', payload)
         self.assertIn(b'spinner-gap.svg', payload)
         self.assertIn(".button-progress-icon", APPROVED_SITE_STYLES)
         self.assertIn(".button:disabled", APPROVED_SITE_STYLES)
+        self.assertIn(".file-picker.is-disabled", APPROVED_SITE_STYLES)
 
     def test_service_explainer_has_responsive_three_step_layout(self) -> None:
         self.assertIn(".service-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));", APPROVED_SITE_STYLES)
@@ -124,6 +130,57 @@ class PresentationTests(unittest.TestCase):
                 pipeline_book_metadata(root / "job", source, source.name),
                 ("Do Hard Things", "Steve Magness"),
             )
+            (config.parent / "translated_metadata.json").write_text(
+                json.dumps({"title": "Сделай сложные вещи", "author": "Стив Мэгнесс"}),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                pipeline_book_metadata(root / "job", source, source.name),
+                ("Сделай сложные вещи", "Стив Мэгнесс"),
+            )
+
+    def test_translation_uses_two_parallel_chunks(self) -> None:
+        self.assertEqual(MAX_TRANSLATORS, 2)
+
+    def test_translation_metadata_is_written_in_existing_first_chunk_call_and_passed_to_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "Author - Title.epub"
+            source.write_bytes(b"source")
+            job_dir = root / "job"
+            temp_book_dir = job_dir / "work" / f"{source.stem}_temp"
+            temp_book_dir.mkdir(parents=True)
+            (temp_book_dir / "config.txt").write_text("original_title=Title\ncreator=Author\n", encoding="utf-8")
+            (temp_book_dir / "chunk0001.md").write_text("chunk", encoding="utf-8")
+            (temp_book_dir / "book.html").write_text("<html/>", encoding="utf-8")
+
+            def fake_translate_chunk(*args, **kwargs):
+                output = args[3]
+                output.write_text("translated chunk", encoding="utf-8")
+                metadata_path = kwargs["metadata_path"]
+                metadata_path.write_text(json.dumps({"title": "Название", "author": "Автор"}), encoding="utf-8")
+
+            with patch("webapp.translate_job.run_logged") as run_logged, patch(
+                "webapp.translate_job.translate_chunk", side_effect=fake_translate_chunk
+            ) as translate_chunk_mock:
+                result = run_translation(
+                    root,
+                    job_dir,
+                    source,
+                    target_code="ru",
+                    target_language="Русский",
+                    source_code="en",
+                    source_language="English",
+                )
+
+            self.assertTrue(result.is_file())
+            translate_chunk_mock.assert_called_once()
+            self.assertEqual(run_logged.call_count, 2)
+            build_command = run_logged.call_args_list[-1].args[0]
+            self.assertIn("--title", build_command)
+            self.assertEqual(build_command[build_command.index("--title") + 1], "Название")
+            self.assertIn("--author", build_command)
+            self.assertEqual(build_command[build_command.index("--author") + 1], "Автор")
 
     def test_done_job_uses_an_accessible_icon_instead_of_colored_text_badge(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -316,7 +373,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn(b'name="source_language"', payload)
         self.assertIn(b'name="target_language"', payload)
         self.assertIn(b'id="jobs"', payload)
-        self.assertIn(b'href="/#jobs"', payload)
+        self.assertRegex(payload.decode(), r'href="/\?refresh=[a-f0-9]+#jobs"')
 
     def test_static_design_asset_is_served_and_traversal_is_rejected(self) -> None:
         response, payload = self.request("GET", "/assets/atmosphere/translate-book-crest.webp")
@@ -345,7 +402,8 @@ class WebAppTests(unittest.TestCase):
             'Content-Disposition: form-data; name="book"; filename="sample.epub"\r\n'
             "Content-Type: application/epub+zip\r\n\r\n"
         ).encode() + valid_epub() + f"\r\n--{boundary}--\r\n".encode()
-        response, _ = self.request("POST", "/upload", body, f"multipart/form-data; boundary={boundary}")
+        with self.assertLogs("webapp.app", level="INFO") as captured:
+            response, _ = self.request("POST", "/upload", body, f"multipart/form-data; boundary={boundary}")
         self.assertEqual(response.status, 303)
         jobs = self.app.store.list()
         self.assertEqual(len(jobs), 1)
@@ -356,6 +414,13 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(jobs[0]["target_language"], "Русский")
         self.assertTrue(Path(jobs[0]["source_path"]).is_file())
         self.assertEqual(self.scanner.calls[0][0], "sample.epub")
+        logs = "\n".join(captured.output)
+        self.assertIn("upload_received", logs)
+        self.assertIn("upload_validation_started", logs)
+        self.assertIn("upload_validation_succeeded", logs)
+        self.assertIn("upload_virus_scan_started", logs)
+        self.assertIn("upload_virus_scan_succeeded", logs)
+        self.assertIn("upload_enqueued", logs)
 
     def test_upload_persists_selected_language(self) -> None:
         boundary = "----translate-book-" + uuid.uuid4().hex

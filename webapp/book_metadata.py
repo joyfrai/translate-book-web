@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 
 UNKNOWN_AUTHOR = "Автор не указан"
+TRANSLATED_METADATA_FILENAME = "translated_metadata.json"
 
 
 def _clean(value: str, *, replace_underscores: bool = False) -> str:
@@ -27,6 +29,20 @@ def filename_book_metadata(original_name: str) -> tuple[str, str]:
     return readable or "Без названия", UNKNOWN_AUTHOR
 
 
+def translated_book_metadata(job_dir: Path, source_path: Path) -> tuple[str | None, str | None]:
+    """Read optional translated title/author generated during the first chunk."""
+    metadata_path = job_dir / "work" / f"{source_path.stem}_temp" / TRANSLATED_METADATA_FILENAME
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    title = _clean(data.get("title", "")) if isinstance(data.get("title"), str) else None
+    author = _clean(data.get("author", "")) if isinstance(data.get("author"), str) else None
+    return title or None, author or None
+
+
 def pipeline_book_metadata(job_dir: Path, source_path: Path, original_name: str) -> tuple[str, str]:
     """Read title/creator written by scripts/convert.py, with filename fallback."""
     fallback_title, fallback_author = filename_book_metadata(original_name)
@@ -41,7 +57,8 @@ def pipeline_book_metadata(job_dir: Path, source_path: Path, original_name: str)
                 metadata[key] = _clean(value)
     except (OSError, UnicodeError):
         pass
+    translated_title, translated_author = translated_book_metadata(job_dir, source_path)
     return (
-        metadata.get("original_title") or fallback_title,
-        metadata.get("creator") or fallback_author,
+        translated_title or metadata.get("original_title") or fallback_title,
+        translated_author or metadata.get("creator") or fallback_author,
     )

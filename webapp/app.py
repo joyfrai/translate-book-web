@@ -58,6 +58,10 @@ RUSSIAN_LANGUAGE_NAMES = {
 }
 
 
+def _log_filename(value: str | Path) -> str:
+    return Path(value).name.replace("\n", "\\n").replace("\r", "\\r")
+
+
 def language_select_label(code: str, name: str) -> str:
     russian_name = RUSSIAN_LANGUAGE_NAMES.get(code)
     if not russian_name or russian_name.casefold() == name.casefold():
@@ -171,6 +175,7 @@ class Store:
                 "UPDATE jobs SET status='queued', updated_at=? WHERE status='processing'",
                 (utc_now(),),
             )
+        LOGGER.info("store_initialized data_dir=%s status_counts=%s", data_dir, self.status_counts())
 
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.db_path, timeout=30)
@@ -246,6 +251,13 @@ class Store:
         with self.connect() as db:
             return db.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
 
+    def status_counts(self) -> dict[str, int]:
+        with self.connect() as db:
+            return {
+                row["status"]: row["count"]
+                for row in db.execute("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status")
+            }
+
     def list_finished(self) -> list[sqlite3.Row]:
         with self.connect() as db:
             return db.execute(
@@ -303,7 +315,18 @@ class Worker(threading.Thread):
             if job is None:
                 self.stop_event.wait(1)
                 continue
+            job_id = job["id"]
+            job_name = _log_filename(job["original_name"])
+            LOGGER.info(
+                "job_claimed job_id=%s filename=%s source_language=%s target_language=%s",
+                job_id,
+                job_name,
+                job["source_language"],
+                job["target_language"],
+            )
+            stage = "translation"
             try:
+                LOGGER.info("job_translation_started job_id=%s", job_id)
                 result_path = run_translation(
                     repo_root=self.repo_root,
                     job_dir=self.store.jobs_dir / job["id"],
@@ -313,21 +336,29 @@ class Worker(threading.Thread):
                     target_code=job["target_code"],
                     target_language=job["target_language"],
                 )
+                LOGGER.info("job_translation_succeeded job_id=%s result=%s", job_id, _log_filename(result_path))
+                stage = "metadata"
+                LOGGER.info("job_metadata_started job_id=%s", job_id)
                 title, author = pipeline_book_metadata(
                     self.store.jobs_dir / job["id"],
                     Path(job["source_path"]),
                     job["original_name"],
                 )
                 self.store.set_book_metadata(job["id"], title, author)
+                LOGGER.info("job_metadata_succeeded job_id=%s title=%s author=%s", job_id, _log_filename(title), _log_filename(author))
+                stage = "finish"
                 self.store.finish(job["id"], result_path)
+                LOGGER.info("job_completed job_id=%s result=%s", job_id, _log_filename(result_path))
             except Exception as exc:  # keep the durable queue alive
+                LOGGER.exception("job_failed job_id=%s stage=%s error=%s", job_id, stage, exc)
                 self.store.fail(job["id"], str(exc))
             finally:
                 try:
-                    requests, tokens = collect_translation_usage(self.store.jobs_dir / job["id"])
-                    self.store.set_translation_usage(job["id"], requests, tokens)
+                    requests, tokens = collect_translation_usage(self.store.jobs_dir / job_id)
+                    self.store.set_translation_usage(job_id, requests, tokens)
+                    LOGGER.info("job_usage_persisted job_id=%s requests=%d tokens=%d", job_id, requests, tokens)
                 except Exception:
-                    LOGGER.warning("Could not persist translation usage for job %s", job["id"], exc_info=True)
+                    LOGGER.warning("job_usage_persist_failed job_id=%s", job_id, exc_info=True)
 
 
 class App:
@@ -724,6 +755,7 @@ def page(app: App, message: str = "") -> bytes:
     job_rows = "".join(job_markup(app, job) for job in app.store.list())
     jobs = f'<ul class="job-list">{job_rows}</ul>' if job_rows else '<div class="empty-state"><strong>Файлов пока нет.</strong><span>После выбора книги задача появится здесь.</span></div>'
     notice = f'<div class="notice" role="status">{html.escape(message)}</div>' if message else ""
+    refresh_href = f'{app_url("/")}?refresh={uuid.uuid4().hex}#jobs'
     source_options = "".join(
         f'<option value="{code}"{" selected" if code == DEFAULT_SOURCE_CODE else ""}>{html.escape(language_select_label(code, name))}</option>'
         for code, name in SOURCE_LANGUAGES.items()
@@ -758,14 +790,15 @@ def page(app: App, message: str = "") -> bytes:
     </div>
   </form>
   <section class="tasks-section" id="jobs" aria-labelledby="jobs-title">
-    <div class="section-heading"><div><h2 id="jobs-title">Текущие загрузки</h2></div><a class="refresh-link" href="{app_url('/#jobs')}">{icon('arrow-clockwise')}<span>Обновить</span></a></div>
+    <div class="section-heading"><div><h2 id="jobs-title">Текущие загрузки</h2></div><a class="refresh-link" href="{refresh_href}">{icon('arrow-clockwise')}<span>Обновить</span></a></div>
     {jobs}
   </section>
 </main>{site_footer()}</div></div>
 <script>
   const bookInput = document.getElementById("book");
+  const fileDrop = document.getElementById("file-drop");
+  let uploadLocked = false;
   if (bookInput) {{
-    const fileDrop = document.getElementById("file-drop");
     const fileName = document.getElementById("file-name");
     const fileMeta = document.getElementById("file-meta");
     const feedback = document.getElementById("file-feedback");
@@ -814,6 +847,7 @@ def page(app: App, message: str = "") -> bytes:
       fileDrop.addEventListener(eventName, (event) => {{
         event.preventDefault();
         event.stopPropagation();
+        if (uploadLocked) return;
         fileDrop.classList.add("is-dragover");
       }});
     }});
@@ -829,6 +863,7 @@ def page(app: App, message: str = "") -> bytes:
       event.preventDefault();
       event.stopPropagation();
       fileDrop.classList.remove("is-dragover");
+      if (uploadLocked) return;
       const file = event.dataTransfer && event.dataTransfer.files[0];
       if (file) {{
         applyDroppedFile(file);
@@ -847,6 +882,14 @@ def page(app: App, message: str = "") -> bytes:
         return;
       }}
       uploadSubmit.disabled = true;
+      uploadLocked = true;
+      if (bookInput) {{
+        bookInput.disabled = true;
+      }}
+      if (fileDrop) {{
+        fileDrop.classList.add("is-disabled");
+        fileDrop.setAttribute("aria-disabled", "true");
+      }}
       uploadSubmit.setAttribute("aria-busy", "true");
       uploadSubmit.setAttribute("aria-label", "Книга загружается");
       const submitIcon = uploadSubmit.querySelector(".ui-icon");
@@ -1017,13 +1060,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             content_length = int(self.headers.get("Content-Length", "-1"))
         except ValueError:
+            LOGGER.warning("upload_rejected stage=request reason=invalid_content_length")
             self.send_bytes(b"Invalid Content-Length", "text/plain; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
+        LOGGER.info("upload_received content_length=%d", content_length)
         if content_length < 0 or content_length > MAX_UPLOAD_BYTES + 1024 * 1024:
+            LOGGER.warning("upload_rejected stage=request reason=content_length_limit content_length=%d", content_length)
             self.send_bytes(b"File is too large", "text/plain; charset=utf-8", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
         content_type = self.headers.get("Content-Type", "")
         if not content_type.lower().startswith("multipart/form-data"):
+            LOGGER.warning("upload_rejected stage=request reason=invalid_content_type")
             self.send_bytes(b"Expected multipart upload", "text/plain; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
         body = self.rfile.read(content_length)
@@ -1042,6 +1089,7 @@ class Handler(BaseHTTPRequestHandler):
             except UnicodeDecodeError:
                 source_code = ""
         if source_code not in SOURCE_LANGUAGES:
+            LOGGER.warning("upload_rejected stage=language reason=unsupported_source source_code=%s", source_code)
             self.send_bytes(page(self.server.app, "Исходный язык не поддерживается."), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
         source_language = SOURCE_LANGUAGES[source_code]
@@ -1057,38 +1105,59 @@ class Handler(BaseHTTPRequestHandler):
             except UnicodeDecodeError:
                 target_code = ""
         if target_code not in SUPPORTED_LANGUAGES:
+            LOGGER.warning("upload_rejected stage=language reason=unsupported_target target_code=%s", target_code)
             self.send_bytes(page(self.server.app, "Выбранный язык не поддерживается."), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
         target_language = SUPPORTED_LANGUAGES[target_code]
         uploaded = next((part for part in message.iter_parts() if part.get_param("name", header="content-disposition") == "book"), None)
         if uploaded is None or not uploaded.get_filename():
+            LOGGER.warning("upload_rejected stage=parse reason=file_missing")
             self.send_bytes(page(self.server.app, "Файл не выбран."), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
         filename = Path(uploaded.get_filename()).name
+        log_filename = _log_filename(filename)
         extension = Path(filename).suffix.lower()
         payload = uploaded.get_payload(decode=True) or b""
+        LOGGER.info("upload_file_received filename=%s extension=%s size_bytes=%d source_language=%s target_language=%s", log_filename, extension, len(payload), source_language, target_language)
         if extension not in ALLOWED_EXTENSIONS:
+            LOGGER.warning("upload_rejected filename=%s stage=extension reason=unsupported_extension", log_filename)
             self.send_bytes(page(self.server.app, "Поддерживаются только PDF, DOCX и EPUB."), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
         if not payload or len(payload) > MAX_UPLOAD_BYTES:
+            LOGGER.warning("upload_rejected filename=%s stage=size size_bytes=%d", log_filename, len(payload))
             self.send_bytes(page(self.server.app, "Размер файла должен быть от 1 байта до 30 MB."), "text/html; charset=utf-8", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
         try:
+            LOGGER.info("upload_validation_started filename=%s", log_filename)
             validate_payload(filename, payload)
         except UploadSecurityError as exc:
+            LOGGER.warning("upload_rejected filename=%s stage=validation reason=%s", log_filename, exc)
             self.send_bytes(page(self.server.app, str(exc)), "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
             return
+        LOGGER.info("upload_validation_succeeded filename=%s", log_filename)
         if self.server.app.scanner is None:
+            LOGGER.error("upload_rejected filename=%s stage=virus_scan reason=scanner_not_configured", log_filename)
             self.send_bytes(page(self.server.app, "VirusTotal не настроен: загрузка временно недоступна."), "text/html; charset=utf-8", HTTPStatus.SERVICE_UNAVAILABLE)
             return
         try:
-            self.server.app.scanner.scan(filename, payload)
+            LOGGER.info("upload_virus_scan_started filename=%s", log_filename)
+            verdict = self.server.app.scanner.scan(filename, payload)
         except UploadSecurityError as exc:
+            LOGGER.warning("upload_rejected filename=%s stage=virus_scan reason=threat error=%s", log_filename, exc)
             self.send_bytes(page(self.server.app, str(exc)), "text/html; charset=utf-8", HTTPStatus.UNPROCESSABLE_ENTITY)
             return
         except VirusTotalError as exc:
+            LOGGER.error("upload_rejected filename=%s stage=virus_scan reason=service_error error=%s", log_filename, exc)
             self.send_bytes(page(self.server.app, str(exc)), "text/html; charset=utf-8", HTTPStatus.SERVICE_UNAVAILABLE)
             return
+        LOGGER.info(
+            "upload_virus_scan_succeeded filename=%s analysis_id=%s status=%s malicious=%s suspicious=%s",
+            log_filename,
+            getattr(verdict, "analysis_id", "unknown"),
+            getattr(verdict, "status", "unknown"),
+            getattr(verdict, "malicious", "unknown"),
+            getattr(verdict, "suspicious", "unknown"),
+        )
         job_id = uuid.uuid4().hex
         job_dir = self.server.app.store.jobs_dir / job_id
         source_dir = job_dir / "input"
@@ -1105,6 +1174,8 @@ class Handler(BaseHTTPRequestHandler):
             target_code,
             target_language,
         )
+        counts = self.server.app.store.status_counts()
+        LOGGER.info("upload_enqueued job_id=%s filename=%s queue_depth=%d processing=%d", job_id, log_filename, counts.get("queued", 0), counts.get("processing", 0))
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", app_url("/"))
         self.end_headers()
@@ -1119,20 +1190,25 @@ class WebServer(ThreadingHTTPServer):
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     repo_root = Path(__file__).resolve().parents[1]
     data_dir = Path(os.getenv("TRANSLATE_BOOK_DATA_DIR", str(repo_root / "data"))).resolve()
     host = os.getenv("TRANSLATE_BOOK_HOST", "127.0.0.1")
     port = int(os.getenv("TRANSLATE_BOOK_PORT", "3100"))
-    app = App(repo_root, data_dir, scanner=VirusTotalScanner.from_env())
+    scanner = VirusTotalScanner.from_env()
+    LOGGER.info("service_start host=%s port=%d data_dir=%s virus_total_configured=%s", host, port, data_dir, scanner is not None)
+    app = App(repo_root, data_dir, scanner=scanner)
     app.worker.start()
     server = WebServer((host, port), app)
     try:
-        print(f"translate-book-web listening on {host}:{port}", flush=True)
+        LOGGER.info("service_listening host=%s port=%d", host, port)
         server.serve_forever()
     finally:
+        LOGGER.info("service_stopping")
         app.worker.stop()
         app.worker.join(timeout=5)
         server.server_close()
+        LOGGER.info("service_stopped")
 
 
 if __name__ == "__main__":
