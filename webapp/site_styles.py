@@ -414,7 +414,7 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 500; }
   cursor: pointer;
   transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
 }
-.file-picker.is-disabled { cursor: wait; opacity: .58; }
+.file-picker.is-disabled { pointer-events: none; cursor: wait; opacity: .58; }
 .file-picker:hover, .file-picker.has-file, .file-picker.is-dragover { border-color: var(--brass); background-color: #0d1714; box-shadow: inset 0 0 28px rgba(0, 0, 0, .24), 0 16px 34px rgba(0, 0, 0, .18); }
 .file-picker.is-dragover { background-color: #18251d; }
 .file-picker .file-visual { width: 56px; height: 56px; filter: drop-shadow(0 5px 8px rgba(0, 0, 0, .35)); }

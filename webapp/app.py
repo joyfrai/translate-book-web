@@ -884,7 +884,7 @@ def page(app: App, message: str = "") -> bytes:
       uploadSubmit.disabled = true;
       uploadLocked = true;
       if (bookInput) {{
-        bookInput.disabled = true;
+        bookInput.setAttribute("aria-disabled", "true");
       }}
       if (fileDrop) {{
         fileDrop.classList.add("is-disabled");
