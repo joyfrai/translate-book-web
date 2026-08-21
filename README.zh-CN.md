@@ -134,6 +134,38 @@ Skill 自动处理完整流程 — 转换、拆分、并行翻译、校验、合
 | `book.epub` | 电子书 |
 | `book.pdf` | 可打印 PDF |
 
+## Web 应用部署（systemd）
+
+Web 应用使用专用的 `translatebook` 系统用户运行。部署时请以仓库中的 [`deploy/translate-book-web.service.example`](deploy/translate-book-web.service.example) 为准。
+
+服务使用独立的运行时 home，并显式设置 `CODEX_HOME`：
+
+- `/var/lib/translate-book-web/.codex` 只保存 worker 所需的 Codex 运行时认证信息。
+- 将 `/root/.codex/auth.json` 复制到该目录，权限设为 `0600`，所有者设为 `translatebook:translatebook`；不要把此文件或任何 token 提交到 Git。
+- `RestrictAddressFamilies` 包含 `AF_NETLINK`，因为 Codex 的 Bubblewrap sandbox 创建内部网络命名空间时需要它。缺少该设置时，chunk 可能出现 `bwrap: ... NETLINK_ROUTE` 并不断重试。
+- VirusTotal 凭据和其他环境变量中的 secret 必须继续放在外部 `EnvironmentFile` 中。
+
+示例配置：
+
+```bash
+useradd --system --user-group --home-dir /var/lib/translate-book-web --shell /usr/sbin/nologin translatebook
+install -d -m 0750 -o translatebook -g translatebook /var/lib/translate-book-web
+install -d -m 0700 -o translatebook -g translatebook /var/lib/translate-book-web/.codex
+install -m 0600 -o translatebook -g translatebook /root/.codex/auth.json /var/lib/translate-book-web/.codex/auth.json
+chown -R translatebook:translatebook /root/projects/translate-book-web/data
+chmod o+x /root
+systemctl daemon-reload
+systemctl enable --now translate-book-web.service
+```
+
+部署后检查服务用户、队列 worker 和公开路由：
+
+```bash
+systemctl is-active translate-book-web.service
+journalctl -u translate-book-web.service -n 50 --no-pager
+curl -fsS -o /dev/null -w '%{http_code}\n' https://yagix.ru/translatebook/
+```
+
 ## 仓库测试资产
 
 - 需要纳入仓库的基准书输入，统一放在 `tests/baselines/<book-id>/`。

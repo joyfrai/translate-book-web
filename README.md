@@ -134,6 +134,38 @@ All files are in `{book_name}_temp/`:
 | `book.epub` | E-book |
 | `book.pdf` | Print-ready PDF |
 
+## Web App Deployment (systemd)
+
+The web app runs as the dedicated `translatebook` system user. Use the checked-in unit example at [`deploy/translate-book-web.service.example`](deploy/translate-book-web.service.example) as the deployment baseline.
+
+The service uses a private runtime home and an explicit `CODEX_HOME`:
+
+- `/var/lib/translate-book-web/.codex` stores only the Codex runtime authentication needed by the worker.
+- Copy `/root/.codex/auth.json` there with mode `0600` and ownership `translatebook:translatebook`; never commit this file or any token to Git.
+- `RestrictAddressFamilies` includes `AF_NETLINK` because Codex's Bubblewrap sandbox needs it to create its internal network namespace. Without it, chunks may retry with `bwrap: ... NETLINK_ROUTE` errors.
+- Keep VirusTotal credentials and other environment secrets in external `EnvironmentFile` paths.
+
+Example setup:
+
+```bash
+useradd --system --user-group --home-dir /var/lib/translate-book-web --shell /usr/sbin/nologin translatebook
+install -d -m 0750 -o translatebook -g translatebook /var/lib/translate-book-web
+install -d -m 0700 -o translatebook -g translatebook /var/lib/translate-book-web/.codex
+install -m 0600 -o translatebook -g translatebook /root/.codex/auth.json /var/lib/translate-book-web/.codex/auth.json
+chown -R translatebook:translatebook /root/projects/translate-book-web/data
+chmod o+x /root
+systemctl daemon-reload
+systemctl enable --now translate-book-web.service
+```
+
+After deployment, verify the service account, queue worker, and public route:
+
+```bash
+systemctl is-active translate-book-web.service
+journalctl -u translate-book-web.service -n 50 --no-pager
+curl -fsS -o /dev/null -w '%{http_code}\n' https://yagix.ru/translatebook/
+```
+
 ## Repository Test Assets
 
 - Checked-in baseline inputs live under `tests/baselines/<book-id>/`.
